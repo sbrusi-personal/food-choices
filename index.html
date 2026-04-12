@@ -1,0 +1,1079 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <title>🍽 Eat Tracker</title>
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    body { margin: 0; background: #05080f; overflow-x: hidden; }
+    button, input, select, textarea { font-family: Georgia, serif; }
+    input[type=date] { color-scheme: dark; }
+    ::-webkit-scrollbar { width: 4px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 2px; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+<script type="text/babel">
+
+// ── Config ──
+const BACKEND = "YOUR_APPS_SCRIPT_URL_HERE";
+const STORAGE_KEY = "eat-tracker-v3";
+
+const CAT_LABELS = { fast_food: 'Fast Food', casual: 'Casual Dining', sit_down: 'Sit-Down' };
+
+const ALL_TAGS = ['Burgers','Chicken','Pizza','Mexican','Asian','Sandwiches',
+  'Breakfast','Wings','Steakhouse','Italian','Seafood','American','Healthy','Coffee','BBQ','Pasta','Desserts'];
+
+const FOOD_TAGS = {
+  mcdonalds:'Burgers,Breakfast', burger_king:'Burgers', wendys:'Burgers',
+  taco_bell:'Mexican', chick_fil_a:'Chicken', subway:'Sandwiches',
+  dominos:'Pizza', pizza_hut:'Pizza', kfc:'Chicken', popeyes:'Chicken',
+  chipotle:'Mexican', panda_express:'Asian', five_guys:'Burgers',
+  shake_shack:'Burgers', sonic:'Burgers,Breakfast', arbys:'Sandwiches',
+  dairy_queen:'Burgers,Desserts', wingstop:'Wings', raising_canes:'Chicken',
+  little_caesars:'Pizza', papa_johns:'Pizza', jersey_mikes:'Sandwiches',
+  firehouse_subs:'Sandwiches', jimmy_johns:'Sandwiches', panera:'Sandwiches,Healthy',
+  dunkin:'Coffee,Breakfast', starbucks:'Coffee', checkers:'Burgers',
+  in_n_out:'Burgers', jack_box:'Burgers,Breakfast', whataburger:'Burgers,Breakfast',
+  culvers:'Burgers', white_castle:'Burgers', cook_out:'Burgers,BBQ',
+  zaxbys:'Wings,Chicken', bojangles:'Chicken,Breakfast', waffle_house:'American,Breakfast',
+  el_pollo_loco:'Mexican,Chicken', del_taco:'Mexican', steak_n_shake:'Burgers,American',
+  wawa:'Sandwiches,Breakfast', chilis:'American,Burgers', applebees:'American',
+  tgi_fridays:'American', bww:'Wings', red_robin:'Burgers',
+  texas_roadhouse:'Steakhouse,BBQ', outback:'Steakhouse', cracker_barrel:'American,Breakfast',
+  qdoba:'Mexican', moes:'Mexican', dennys:'American,Breakfast', ihop:'Breakfast',
+  first_watch:'Breakfast,Healthy', noodles:'Pasta', jasons_deli:'Sandwiches,Healthy',
+  golden_corral:'American', hooters:'Wings', bob_evans:'American,Breakfast',
+  sizzler:'Steakhouse', olive_garden:'Italian', cheesecake:'American',
+  longhorn:'Steakhouse', red_lobster:'Seafood', pf_changs:'Asian',
+  bonefish:'Seafood', carrabbas:'Italian', maggianos:'Italian',
+  benihana:'Asian', logans:'Steakhouse', ruby_tuesday:'American,Burgers', perkins:'Breakfast,American',
+};
+
+// ── Restaurant Database ──
+const RESTAURANT_DB = [
+  { id:'mcdonalds',      name:"McDonald's",         category:'fast_food', national:true },
+  { id:'burger_king',    name:"Burger King",         category:'fast_food', national:true },
+  { id:'wendys',         name:"Wendy's",             category:'fast_food', national:true },
+  { id:'taco_bell',      name:"Taco Bell",           category:'fast_food', national:true },
+  { id:'chick_fil_a',    name:"Chick-fil-A",         category:'fast_food', national:true },
+  { id:'subway',         name:"Subway",              category:'fast_food', national:true },
+  { id:'dominos',        name:"Domino's",            category:'fast_food', national:true },
+  { id:'pizza_hut',      name:"Pizza Hut",           category:'fast_food', national:true },
+  { id:'kfc',            name:"KFC",                 category:'fast_food', national:true },
+  { id:'popeyes',        name:"Popeyes",             category:'fast_food', national:true },
+  { id:'chipotle',       name:"Chipotle",            category:'fast_food', national:true },
+  { id:'panda_express',  name:"Panda Express",       category:'fast_food', national:true },
+  { id:'five_guys',      name:"Five Guys",           category:'fast_food', national:true },
+  { id:'shake_shack',    name:"Shake Shack",         category:'fast_food', national:true },
+  { id:'sonic',          name:"Sonic Drive-In",      category:'fast_food', national:true },
+  { id:'arbys',          name:"Arby's",              category:'fast_food', national:true },
+  { id:'dairy_queen',    name:"Dairy Queen",         category:'fast_food', national:true },
+  { id:'wingstop',       name:"Wingstop",            category:'fast_food', national:true },
+  { id:'raising_canes',  name:"Raising Cane's",      category:'fast_food', national:true },
+  { id:'little_caesars', name:"Little Caesars",      category:'fast_food', national:true },
+  { id:'papa_johns',     name:"Papa John's",         category:'fast_food', national:true },
+  { id:'jersey_mikes',   name:"Jersey Mike's",       category:'fast_food', national:true },
+  { id:'firehouse_subs', name:"Firehouse Subs",      category:'fast_food', national:true },
+  { id:'jimmy_johns',    name:"Jimmy John's",        category:'fast_food', national:true },
+  { id:'panera',         name:"Panera Bread",        category:'fast_food', national:true },
+  { id:'dunkin',         name:"Dunkin'",             category:'fast_food', national:true },
+  { id:'starbucks',      name:"Starbucks",           category:'fast_food', national:true },
+  { id:'checkers',       name:"Checkers / Rally's",  category:'fast_food', national:true },
+  { id:'in_n_out',       name:"In-N-Out Burger",     category:'fast_food', national:false, states:['CA','AZ','NV','TX','UT','CO','OR'] },
+  { id:'jack_box',       name:"Jack in the Box",     category:'fast_food', national:false, states:['CA','TX','AZ','NV','OR','WA','NM','CO','ID','HI','OK','LA','MS','AL','GA','FL','MO','AR'] },
+  { id:'whataburger',    name:"Whataburger",         category:'fast_food', national:false, states:['TX','AL','AZ','AR','FL','GA','LA','MS','NM','OK','SC','TN','KS','MO'] },
+  { id:'culvers',        name:"Culver's",            category:'fast_food', national:false, states:['WI','MN','IL','IN','IA','MO','MI','OH','KS','NE','SD','ND','CO','TX','TN','KY','VA','PA'] },
+  { id:'white_castle',   name:"White Castle",        category:'fast_food', national:false, states:['IL','IN','KY','MI','MN','MO','NJ','NY','OH','TN','WI'] },
+  { id:'cook_out',       name:"Cook Out",            category:'fast_food', national:false, states:['NC','SC','VA','GA','TN','AL','MS','MD','WV','KY','OH','IN','FL'] },
+  { id:'zaxbys',         name:"Zaxby's",             category:'fast_food', national:false, states:['GA','AL','FL','NC','SC','TN','VA','MS','AR','LA','TX','IN','KY','OH','MD'] },
+  { id:'bojangles',      name:"Bojangles",           category:'fast_food', national:false, states:['NC','SC','VA','GA','TN','FL','AL','MD','DC','PA','OH','KY','WV'] },
+  { id:'waffle_house',   name:"Waffle House",        category:'fast_food', national:false, states:['GA','AL','FL','NC','SC','TN','VA','TX','LA','MS','AR','KY','OH','IN','MO','KS','OK','AZ','CO','WI','PA','MD','DC','WV','DE'] },
+  { id:'el_pollo_loco',  name:"El Pollo Loco",       category:'fast_food', national:false, states:['CA','AZ','NV','TX','UT','CO'] },
+  { id:'del_taco',       name:"Del Taco",            category:'fast_food', national:false, states:['CA','AZ','NV','TX','CO','UT','OR','WA','NM','ID','MO','GA'] },
+  { id:'steak_n_shake',  name:"Steak 'n Shake",      category:'fast_food', national:false, states:['IL','IN','KY','TN','OH','MI','MO','GA','FL','TX','NC','SC','VA','AL','IA','KS','WI','MN','NE','OK','AR'] },
+  { id:'wawa',           name:"Wawa",                category:'fast_food', national:false, states:['PA','NJ','DE','MD','VA','FL','DC'] },
+  { id:'chilis',         name:"Chili's",             category:'casual', national:true },
+  { id:'applebees',      name:"Applebee's",          category:'casual', national:true },
+  { id:'tgi_fridays',    name:"TGI Fridays",         category:'casual', national:true },
+  { id:'bww',            name:"Buffalo Wild Wings",  category:'casual', national:true },
+  { id:'red_robin',      name:"Red Robin",           category:'casual', national:true },
+  { id:'texas_roadhouse',name:"Texas Roadhouse",     category:'casual', national:true },
+  { id:'outback',        name:"Outback Steakhouse",  category:'casual', national:true },
+  { id:'cracker_barrel', name:"Cracker Barrel",      category:'casual', national:true },
+  { id:'qdoba',          name:"Qdoba",               category:'casual', national:true },
+  { id:'moes',           name:"Moe's SW Grill",      category:'casual', national:true },
+  { id:'dennys',         name:"Denny's",             category:'casual', national:true },
+  { id:'ihop',           name:"IHOP",                category:'casual', national:true },
+  { id:'first_watch',    name:"First Watch",         category:'casual', national:true },
+  { id:'noodles',        name:"Noodles & Company",   category:'casual', national:true },
+  { id:'jasons_deli',    name:"Jason's Deli",        category:'casual', national:true },
+  { id:'golden_corral',  name:"Golden Corral",       category:'casual', national:true },
+  { id:'hooters',        name:"Hooters",             category:'casual', national:true },
+  { id:'bob_evans',      name:"Bob Evans",           category:'casual', national:false, states:['OH','MI','IN','IL','PA','WV','KY','TN','NC','SC','FL','GA','VA','MD','NJ','NY'] },
+  { id:'sizzler',        name:"Sizzler",             category:'casual', national:false, states:['CA','AZ','CO','HI','NV','OR','UT','WA'] },
+  { id:'olive_garden',   name:"Olive Garden",        category:'sit_down', national:true },
+  { id:'cheesecake',     name:"The Cheesecake Factory", category:'sit_down', national:true },
+  { id:'longhorn',       name:"LongHorn Steakhouse", category:'sit_down', national:true },
+  { id:'red_lobster',    name:"Red Lobster",         category:'sit_down', national:true },
+  { id:'pf_changs',      name:"P.F. Chang's",        category:'sit_down', national:true },
+  { id:'bonefish',       name:"Bonefish Grill",      category:'sit_down', national:true },
+  { id:'carrabbas',      name:"Carrabba's",          category:'sit_down', national:true },
+  { id:'maggianos',      name:"Maggiano's",          category:'sit_down', national:true },
+  { id:'benihana',       name:"Benihana",            category:'sit_down', national:true },
+  { id:'logans',         name:"Logan's Roadhouse",   category:'sit_down', national:true },
+  { id:'ruby_tuesday',   name:"Ruby Tuesday",        category:'sit_down', national:true },
+  { id:'perkins',        name:"Perkins Restaurant",  category:'sit_down', national:false, states:['MN','WI','IL','IN','OH','MI','IA','MO','KS','NE','SD','ND','PA','NY','FL','NH','ME','VT','MA'] },
+];
+
+// ── Core utilities ──
+function api(params) {
+  return new Promise((resolve) => {
+    const cb = 'cb_' + Math.random().toString(36).slice(2);
+    const qs = Object.entries({...params, callback:cb})
+      .map(([k,v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+    const s = document.createElement('script');
+    const t = setTimeout(() => { delete window[cb]; s.remove(); resolve(null); }, 12000);
+    window[cb] = (d) => { clearTimeout(t); delete window[cb]; s.remove(); resolve(d); };
+    s.src = `${BACKEND}?${qs}`; document.head.appendChild(s);
+  });
+}
+function loadLocal() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY))||{}; } catch(e) { return {}; } }
+function saveLocal(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch(e) {} }
+function todayStr() { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; }
+function daysBetween(d1,d2) { return Math.round((new Date(d2+'T12:00:00')-new Date(d1+'T12:00:00'))/86400000); }
+function getLastVisit(rid, visits) {
+  const rv = visits.filter(v=>String(v.restaurant_id)===String(rid)).sort((a,b)=>b.date>a.date?1:-1);
+  return rv.length>0?rv[0]:null;
+}
+function zipToState(zip) {
+  if (!zip||zip.length<3) return null;
+  const p = parseInt(zip.substring(0,3));
+  const r = [[10,27,'MA'],[28,29,'RI'],[30,38,'NH'],[39,49,'ME'],[50,59,'VT'],[60,69,'CT'],
+    [70,89,'NJ'],[100,149,'NY'],[150,196,'PA'],[197,199,'DE'],[200,205,'DC'],[206,219,'MD'],
+    [220,246,'VA'],[247,268,'WV'],[270,289,'NC'],[290,299,'SC'],[300,319,'GA'],[320,349,'FL'],
+    [350,369,'AL'],[370,385,'TN'],[386,399,'MS'],[400,427,'KY'],[430,458,'OH'],[460,479,'IN'],
+    [480,499,'MI'],[500,528,'IA'],[530,549,'WI'],[550,567,'MN'],[570,577,'SD'],[580,588,'ND'],
+    [590,599,'MT'],[600,629,'IL'],[630,658,'MO'],[660,679,'KS'],[680,693,'NE'],[700,715,'LA'],
+    [716,729,'AR'],[730,749,'OK'],[750,799,'TX'],[800,816,'CO'],[820,831,'WY'],[832,838,'ID'],
+    [840,847,'UT'],[850,865,'AZ'],[870,884,'NM'],[889,898,'NV'],[900,961,'CA'],[967,968,'HI'],
+    [970,979,'OR'],[980,994,'WA'],[995,999,'AK']];
+  for (const [mn,mx,st] of r) if (p>=mn&&p<=mx) return st;
+  return null;
+}
+function getAvailableForState(sc) { return RESTAURANT_DB.filter(r=>r.national||(r.states&&r.states.includes(sc))); }
+function parseTags(t) { return t?(typeof t==='string'?t.split(',').filter(Boolean):[]):[] ; }
+function getGroupIds(g) { return Array.isArray(g.restaurant_ids)?g.restaurant_ids:String(g.restaurant_ids||'').split(',').filter(Boolean); }
+
+// Group-aware allowance check
+function getAllowanceInfo(restaurant, visits, groups) {
+  const today = todayStr();
+  const last = getLastVisit(restaurant.id, visits);
+  const freq = parseInt(restaurant.frequency_days||30);
+  const daysSince = last ? daysBetween(last.date, today) : null;
+  if (daysSince!==null && daysSince<freq) {
+    return { allowed:false, reason:'individual', daysUntil:freq-daysSince, daysSince };
+  }
+  for (const g of groups) {
+    const ids = getGroupIds(g);
+    if (!ids.includes(restaurant.id)) continue;
+    const gLast = ids.map(id=>getLastVisit(id,visits)).filter(Boolean).sort((a,b)=>b.date>a.date?1:-1)[0];
+    if (gLast) {
+      const gDaysSince = daysBetween(gLast.date, today);
+      const gFreq = parseInt(g.frequency_days||30);
+      if (gDaysSince<gFreq) return { allowed:false, reason:'group', groupName:g.name, daysUntil:gFreq-gDaysSince, daysSince };
+    }
+  }
+  return { allowed:true, daysSince };
+}
+
+// ── Google Maps / Places integration ──
+let _mapsLoaded=false, _mapsLoading=false, _mapsCbs=[];
+function loadMapsAPI(key) {
+  return new Promise((resolve,reject)=>{
+    if(_mapsLoaded){resolve();return;}
+    if(_mapsLoading){_mapsCbs.push({resolve,reject});return;}
+    _mapsLoading=true; _mapsCbs.push({resolve,reject});
+    window.__mapsReady=()=>{ _mapsLoaded=true; _mapsCbs.forEach(c=>c.resolve()); _mapsCbs=[]; };
+    const s=document.createElement('script');
+    s.src=`https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&callback=__mapsReady`;
+    s.onerror=()=>{ _mapsCbs.forEach(c=>c.reject(new Error('Maps failed'))); _mapsCbs=[]; };
+    document.head.appendChild(s);
+  });
+}
+let _loc=null;
+function geocodeZip(zip) {
+  return new Promise((resolve,reject)=>{
+    if(_loc){resolve(_loc);return;}
+    new google.maps.Geocoder().geocode({address:zip+', USA'},(res,st)=>{
+      if(st==='OK'){_loc=res[0].geometry.location;resolve(_loc);}
+      else reject(new Error('Geocode: '+st));
+    });
+  });
+}
+function searchPlaces(query, location) {
+  return new Promise((resolve)=>{
+    const div=document.createElement('div'); document.body.appendChild(div);
+    new google.maps.places.PlacesService(div).textSearch(
+      {query, location, type:['restaurant']},
+      (res,st)=>{ div.remove(); resolve(st===google.maps.places.PlacesServiceStatus.OK?res:[]); }
+    );
+  });
+}
+
+// ── Design tokens ──
+const C = {
+  bg:'#05080f', card:'#0f172a', bar:'#0a0f1a',
+  border:'#1e293b', bBlue:'#1e3a5f', bGreen:'#166534',
+  text:'#f1f5f9', mid:'#94a3b8', muted:'#475569',
+  blue:'#3b82f6', cyan:'#22d3ee', green:'#22c55e',
+  orange:'#f97316', red:'#ef4444',
+};
+const pill=(a,sm)=>({padding:sm?'4px 10px':'6px 14px', borderRadius:20, whiteSpace:'nowrap',
+  border:`1px solid ${a?C.blue:C.border}`, background:a?C.bBlue:'transparent',
+  color:a?'#93c5fd':C.muted, cursor:'pointer', fontSize:sm?11:12, fontFamily:'Georgia,serif'});
+const inp={width:'100%',background:C.bar,border:`1px solid ${C.bBlue}`,borderRadius:8,
+  padding:'10px 14px',color:C.text,fontSize:14,outline:'none'};
+const btn=(bg,col,sm)=>({padding:sm?'6px 12px':'10px 18px',borderRadius:8,border:'none',
+  cursor:'pointer',fontSize:sm?12:14,fontFamily:'Georgia,serif',fontWeight:700,background:bg,color:col});
+const card=(ex={})=>({background:C.card,border:`1px solid ${C.border}`,borderRadius:12,padding:14,marginBottom:8,...ex});
+
+// ══════════════════════════════════════════════
+// TAG CHIPS — reusable
+// ══════════════════════════════════════════════
+function TagChips({ tags, editable, onChange }) {
+  const [showPicker, setShowPicker] = React.useState(false);
+  const list = parseTags(tags);
+  return (
+    <div style={{display:'flex',flexWrap:'wrap',gap:4,alignItems:'center'}}>
+      {list.map(t=>(
+        <span key={t} style={{background:'#1e293b',border:'1px solid #334155',borderRadius:12,
+          padding:'2px 8px',fontSize:11,color:'#94a3b8',display:'flex',alignItems:'center',gap:3}}>
+          {t}
+          {editable&&<button onClick={()=>onChange(list.filter(x=>x!==t).join(','))}
+            style={{background:'none',border:'none',color:'#64748b',cursor:'pointer',padding:0,fontSize:12,lineHeight:1}}>×</button>}
+        </span>
+      ))}
+      {editable&&(
+        <div style={{position:'relative'}}>
+          <button onClick={()=>setShowPicker(!showPicker)}
+            style={{background:'none',border:'1px dashed #334155',borderRadius:12,padding:'2px 8px',
+              color:'#475569',cursor:'pointer',fontSize:11}}>+tag</button>
+          {showPicker&&(
+            <div style={{position:'absolute',left:0,top:22,zIndex:300,background:'#0d1827',
+              border:`1px solid ${C.bBlue}`,borderRadius:8,padding:8,width:180}}>
+              <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                {ALL_TAGS.filter(t=>!list.includes(t)).map(t=>(
+                  <button key={t} onClick={()=>{onChange([...list,t].join(','));setShowPicker(false);}}
+                    style={{...btn('#1e293b','#94a3b8',true),padding:'3px 8px',fontSize:11}}>{t}</button>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// ONBOARDING
+// ══════════════════════════════════════════════
+function OnboardingScreen({ onComplete }) {
+  const [step, setStep] = React.useState(1);
+  const [zipInput, setZipInput] = React.useState('');
+  const [detState, setDetState] = React.useState('');
+  const [zipErr, setZipErr] = React.useState('');
+  const [dbRests, setDbRests] = React.useState([]);
+  const [configs, setConfigs] = React.useState({});
+  const [catTab, setCatTab] = React.useState('fast_food');
+  const [search, setSearch] = React.useState('');
+
+  function handleZip() {
+    const st = zipToState(zipInput);
+    if (!st) { setZipErr('Zip not recognized — try again.'); return; }
+    const avail = getAvailableForState(st);
+    const init = {};
+    avail.forEach(r => { init[r.id] = { active:false, frequency_days:30 }; });
+    setDetState(st); setDbRests(avail); setConfigs(init); setZipErr(''); setStep(2);
+  }
+
+  function toggle(id) { setConfigs(c=>({...c,[id]:{...c[id],active:!c[id].active}})); }
+  function setFreq(id,d) { setConfigs(c=>({...c,[id]:{...c[id],frequency_days:d}})); }
+
+  function done() {
+    const rests = dbRests.filter(r=>configs[r.id]?.active).map(r=>({
+      id:r.id, name:r.name, category:r.category,
+      frequency_days:String(configs[r.id].frequency_days),
+      tags: FOOD_TAGS[r.id]||'', active:'true', custom:'false',
+    }));
+    onComplete({ zip:zipInput, state:detState, restaurants:rests });
+  }
+
+  const filtered = dbRests.filter(r=>r.category===catTab&&(!search||r.name.toLowerCase().includes(search.toLowerCase())));
+  const count = Object.values(configs).filter(c=>c.active).length;
+
+  if (step===1) return (
+    <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center',padding:24}}>
+      <div style={{width:'100%',maxWidth:360}}>
+        <div style={{textAlign:'center',marginBottom:32}}>
+          <div style={{fontSize:52}}>🍽</div>
+          <div style={{fontSize:26,color:C.text,margin:'8px 0 6px',fontFamily:'Georgia,serif'}}>Eat Tracker</div>
+          <div style={{color:C.muted,fontSize:14}}>Track your restaurant visit frequency</div>
+        </div>
+        <div style={{background:C.card,border:`1px solid ${C.bBlue}`,borderRadius:14,padding:20}}>
+          <div style={{color:C.mid,fontSize:13,marginBottom:10}}>Enter your zip code to get started</div>
+          <input style={{...inp,fontSize:20,textAlign:'center',letterSpacing:6,marginBottom:8}}
+            type="text" inputMode="numeric" maxLength={5} placeholder="10001"
+            value={zipInput}
+            onChange={e=>{setZipInput(e.target.value.replace(/\D/g,'').slice(0,5));setZipErr('');}}
+            onKeyDown={e=>e.key==='Enter'&&zipInput.length===5&&handleZip()}
+          />
+          {zipErr&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{zipErr}</div>}
+          <button style={{...btn('#1d4ed8','#fff'),width:'100%',marginTop:4,opacity:zipInput.length!==5?0.4:1}}
+            onClick={handleZip} disabled={zipInput.length!==5}>Continue →</button>
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div style={{minHeight:'100vh',background:C.bg,color:C.text,fontFamily:'Georgia,serif',paddingBottom:90}}>
+      <div style={{position:'sticky',top:0,zIndex:100,background:C.bar,borderBottom:`1px solid ${C.border}`,padding:'12px 14px'}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:10}}>
+          <div>
+            <div style={{fontSize:15,fontWeight:700}}>Pick Your Restaurants</div>
+            <div style={{color:C.muted,fontSize:11}}>📍 {zipInput} · {detState} · {count} selected</div>
+          </div>
+          <button style={{...btn('#166534','#4ade80'),padding:'8px 16px',fontSize:13,opacity:count===0?0.4:1}}
+            onClick={done} disabled={count===0}>Done ✓</button>
+        </div>
+        <div style={{display:'flex',gap:7,overflowX:'auto',paddingBottom:4}}>
+          {[['fast_food','🍔 Fast Food'],['casual','🍴 Casual'],['sit_down','🍷 Sit-Down']].map(([k,l])=>(
+            <button key={k} style={pill(catTab===k)} onClick={()=>setCatTab(k)}>{l}</button>
+          ))}
+        </div>
+        <input style={{...inp,marginTop:8,fontSize:13,padding:'7px 12px'}}
+          placeholder="Search..." value={search} onChange={e=>setSearch(e.target.value)} />
+      </div>
+      <div style={{padding:'8px 12px'}}>
+        {filtered.map(r=>{
+          const cfg=configs[r.id]||{};
+          return (
+            <div key={r.id} style={card({borderColor:cfg.active?C.bBlue:C.border})}>
+              <div style={{display:'flex',alignItems:'center',gap:12}}>
+                <div onClick={()=>toggle(r.id)} style={{
+                  width:24,height:24,borderRadius:6,flexShrink:0,cursor:'pointer',
+                  border:`2px solid ${cfg.active?C.blue:'#334155'}`,
+                  background:cfg.active?'#1d4ed8':'transparent',
+                  display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:13
+                }}>{cfg.active?'✓':''}</div>
+                <div style={{flex:1}}>
+                  <div style={{color:cfg.active?C.text:'#64748b',fontSize:14,fontWeight:cfg.active?700:400}}>{r.name}</div>
+                  {FOOD_TAGS[r.id]&&<div style={{color:'#334155',fontSize:11,marginTop:2}}>{FOOD_TAGS[r.id].replace(/,/g,' · ')}</div>}
+                </div>
+              </div>
+              {cfg.active&&(
+                <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                  <div style={{color:C.muted,fontSize:11,marginBottom:6}}>Max frequency:</div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                    {[[7,'Weekly'],[14,'Biweekly'],[30,'Monthly']].map(([d,l])=>(
+                      <button key={d} style={pill(cfg.frequency_days===d)} onClick={()=>setFreq(r.id,d)}>{l}</button>
+                    ))}
+                    <button style={pill(![7,14,30].includes(cfg.frequency_days))} onClick={()=>{
+                      const d=parseInt(window.prompt('Minimum days between visits:'));
+                      if(d>0) setFreq(r.id,d);
+                    }}>Custom{![7,14,30].includes(cfg.frequency_days)?` (${cfg.frequency_days}d)`:''}</button>
+                  </div>
+                  <div style={{color:C.cyan,fontSize:11,marginTop:5}}>✓ Max once every {cfg.frequency_days} day{cfg.frequency_days!==1?'s':''}</div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// SUGGEST TAB
+// ══════════════════════════════════════════════
+function SuggestTab({ restaurants, visits, groups, onLogVisit }) {
+  const [catFilter, setCatFilter] = React.useState('all');
+  const [tagFilter, setTagFilter] = React.useState('');
+  const today = todayStr();
+
+  const active = restaurants.filter(r=>r.active==='true'||r.active===true);
+
+  // All tags present in the user's tracked restaurants
+  const presentTags = [...new Set(active.flatMap(r=>parseTags(r.tags)))].sort();
+
+  const withStatus = active.map(r=>{
+    const info = getAllowanceInfo(r, visits, groups);
+    return {...r, ...info};
+  });
+
+  const filtered = withStatus
+    .filter(r=>catFilter==='all'||r.category===catFilter)
+    .filter(r=>!tagFilter||parseTags(r.tags).includes(tagFilter))
+    .sort((a,b)=>{
+      if(a.allowed&&!b.allowed) return -1;
+      if(!a.allowed&&b.allowed) return 1;
+      if(a.allowed&&b.allowed) {
+        if(a.daysSince===null&&b.daysSince!==null) return -1;
+        if(a.daysSince!==null&&b.daysSince===null) return 1;
+        if(a.daysSince===null&&b.daysSince===null) return a.name.localeCompare(b.name);
+        return (b.daysSince||0)-(a.daysSince||0);
+      }
+      return (a.daysUntil||0)-(b.daysUntil||0);
+    });
+
+  const allowedCount = filtered.filter(r=>r.allowed).length;
+
+  return (
+    <div style={{paddingBottom:80}}>
+      <div style={{position:'sticky',top:0,zIndex:50,background:C.bar,borderBottom:`1px solid ${C.border}`,padding:'10px 12px'}}>
+        {/* Category filter */}
+        <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:5}}>
+          {[['all','🍽 All'],['fast_food','🍔 Fast Food'],['casual','🍴 Casual'],['sit_down','🍷 Sit-Down']].map(([k,l])=>(
+            <button key={k} style={pill(catFilter===k)} onClick={()=>setCatFilter(k)}>{l}</button>
+          ))}
+        </div>
+        {/* Food type filter */}
+        {presentTags.length>0&&(
+          <div style={{display:'flex',gap:5,overflowX:'auto',paddingBottom:3,marginTop:6}}>
+            <button style={pill(!tagFilter,true)} onClick={()=>setTagFilter('')}>All Types</button>
+            {presentTags.map(t=>(
+              <button key={t} style={pill(tagFilter===t,true)} onClick={()=>setTagFilter(tagFilter===t?'':t)}>{t}</button>
+            ))}
+          </div>
+        )}
+        <div style={{color:C.muted,fontSize:11,marginTop:5}}>
+          {allowedCount} of {filtered.length} available today
+        </div>
+      </div>
+
+      <div style={{padding:'8px 12px'}}>
+        {filtered.length===0&&(
+          <div style={{textAlign:'center',padding:60,color:C.muted}}>
+            <div style={{fontSize:36,marginBottom:8}}>🍽</div>
+            <div>No restaurants match this filter.</div>
+          </div>
+        )}
+        {filtered.map(r=>(
+          <div key={r.id} style={{...card({borderColor:r.allowed?C.bGreen:C.border,background:r.allowed?'#0a1a10':C.card}),opacity:r.allowed?1:0.65}}>
+            <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
+              <div style={{flex:1}}>
+                <div style={{display:'flex',alignItems:'center',gap:8}}>
+                  <span style={{fontSize:15}}>{r.category==='fast_food'?'🍔':r.category==='casual'?'🍴':'🍷'}</span>
+                  <span style={{color:r.allowed?C.text:'#64748b',fontSize:15,fontWeight:700}}>{r.name}</span>
+                </div>
+                <div style={{color:C.muted,fontSize:11,marginTop:3}}>
+                  {CAT_LABELS[r.category]} · every {r.frequency_days}d
+                  {parseTags(r.tags).length>0&&<span style={{color:'#334155'}}> · {parseTags(r.tags).join(', ')}</span>}
+                </div>
+                <div style={{fontSize:11,marginTop:3}}>
+                  {r.allowed?(
+                    <span style={{color:C.green}}>
+                      ✓ {r.daysSince===null?'Never visited — fair game!':`Last visit ${r.daysSince}d ago`}
+                    </span>
+                  ):r.reason==='group'?(
+                    <span style={{color:'#a855f7'}}>🔗 Group "{r.groupName}" — available in {r.daysUntil}d</span>
+                  ):(
+                    <span style={{color:C.orange}}>⏳ Available in {r.daysUntil}d</span>
+                  )}
+                </div>
+              </div>
+              {r.allowed&&(
+                <button onClick={()=>onLogVisit(r)}
+                  style={{...btn('#166534','#4ade80',true),flexShrink:0}}>Log Visit</button>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// LOG TAB
+// ══════════════════════════════════════════════
+function LogTab({ restaurants, visits, onSaveVisit, onDeleteVisit, preSelected, onClearPre }) {
+  const [selected, setSelected] = React.useState(null);
+  const [date, setDate] = React.useState(todayStr());
+  const [notes, setNotes] = React.useState('');
+  const [search, setSearch] = React.useState('');
+  const [flash, setFlash] = React.useState('');
+
+  React.useEffect(()=>{ if(preSelected){setSelected(preSelected);setSearch('');onClearPre();} },[preSelected]);
+
+  const active = restaurants.filter(r=>r.active==='true'||r.active===true);
+  const showDrop = search.length>0&&!selected;
+  const dropList = active.filter(r=>r.name.toLowerCase().includes(search.toLowerCase())).slice(0,8);
+
+  function save() {
+    if(!selected) return;
+    const v={ id:Date.now()+'-'+Math.random().toString(36).slice(2,7),
+      restaurant_id:selected.id, restaurant_name:selected.name, date, notes };
+    onSaveVisit(v);
+    setSelected(null);setSearch('');setNotes('');setDate(todayStr());
+    setFlash('✓ Visit logged!'); setTimeout(()=>setFlash(''),2500);
+  }
+  const recent = [...visits].sort((a,b)=>b.date>a.date?1:-1).slice(0,40);
+
+  return (
+    <div style={{padding:'12px 12px 80px',fontFamily:'Georgia,serif'}}>
+      {flash&&<div style={{background:'#166534',border:`1px solid ${C.green}`,borderRadius:8,
+        padding:'10px 14px',marginBottom:10,color:'#4ade80',fontSize:13,textAlign:'center'}}>{flash}</div>}
+      <div style={card({borderColor:C.bBlue})}>
+        <div style={{color:C.mid,fontSize:13,fontWeight:700,marginBottom:12}}>📝 Log a Visit</div>
+        <div style={{marginBottom:8,position:'relative'}}>
+          <input style={{...inp}} placeholder="Search restaurant..."
+            value={selected?selected.name:search}
+            onChange={e=>{setSearch(e.target.value);setSelected(null);}} />
+          {selected&&<button onClick={()=>{setSelected(null);setSearch('');}}
+            style={{position:'absolute',right:10,top:'50%',transform:'translateY(-50%)',
+              background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:16}}>✕</button>}
+          {showDrop&&dropList.length>0&&(
+            <div style={{position:'absolute',left:0,right:0,zIndex:200,background:'#0d1827',
+              border:`1px solid ${C.bBlue}`,borderRadius:8,marginTop:3,maxHeight:220,overflowY:'auto'}}>
+              {dropList.map(r=>(
+                <div key={r.id} onClick={()=>{setSelected(r);setSearch('');}}
+                  style={{padding:'10px 14px',cursor:'pointer',borderBottom:`1px solid #0f172a`,color:C.text,fontSize:14}}
+                  onMouseOver={e=>e.currentTarget.style.background=C.border}
+                  onMouseOut={e=>e.currentTarget.style.background='transparent'}>
+                  {r.name} <span style={{color:C.muted,fontSize:11}}>· {CAT_LABELS[r.category]}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+        <input type="date" style={{...inp,marginBottom:8}} value={date} onChange={e=>setDate(e.target.value)} />
+        <input style={{...inp,marginBottom:12}} placeholder="Notes (optional)" value={notes} onChange={e=>setNotes(e.target.value)} />
+        <button style={{...btn(selected?'#1d4ed8':'#1e293b',selected?'#fff':C.muted),width:'100%'}}
+          onClick={save} disabled={!selected}>Save Visit</button>
+      </div>
+      <div style={{color:C.muted,fontSize:11,margin:'14px 0 6px 4px'}}>HISTORY ({recent.length})</div>
+      {recent.length===0&&<div style={{textAlign:'center',padding:30,color:'#334155',fontSize:13}}>No visits yet</div>}
+      {recent.map(v=>{
+        const r=restaurants.find(x=>x.id===v.restaurant_id);
+        return (
+          <div key={v.id} style={card({display:'flex',alignItems:'center',justifyContent:'space-between',gap:8})}>
+            <div style={{flex:1}}>
+              <div style={{color:C.text,fontSize:13,fontWeight:700}}>{v.restaurant_name}</div>
+              <div style={{color:C.muted,fontSize:11}}>{v.date}{v.notes?` · ${v.notes}`:''}{r?<span style={{color:'#334155'}}> · {CAT_LABELS[r.category]}</span>:''}</div>
+            </div>
+            <button onClick={()=>{if(window.confirm('Delete this visit?'))onDeleteVisit(v.id);}}
+              style={{background:'none',border:'none',color:'#7f1d1d',cursor:'pointer',fontSize:18,padding:4}}>✕</button>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// GROUP FORM (inline creation/edit)
+// ══════════════════════════════════════════════
+function GroupForm({ restaurants, group, onSave, onCancel }) {
+  const [name, setName] = React.useState(group?.name||'');
+  const [selIds, setSelIds] = React.useState(group?getGroupIds(group):[]);
+  const [freq, setFreq] = React.useState(parseInt(group?.frequency_days||30));
+  const [search, setSearch] = React.useState('');
+
+  const active = restaurants.filter(r=>r.active==='true'||r.active===true);
+  const shown = active.filter(r=>!search||r.name.toLowerCase().includes(search.toLowerCase()));
+
+  function toggle(id) { setSelIds(s=>s.includes(id)?s.filter(x=>x!==id):[...s,id]); }
+
+  function save() {
+    if(!name.trim()||selIds.length<2) return;
+    onSave({ id:group?.id||('grp_'+Date.now()), name:name.trim(), restaurant_ids:selIds, frequency_days:freq });
+  }
+
+  return (
+    <div style={card({borderColor:C.bBlue})}>
+      <div style={{color:C.mid,fontSize:13,fontWeight:700,marginBottom:10}}>
+        {group?'Edit Group':'New Restaurant Group'}
+      </div>
+      <input style={{...inp,marginBottom:8}} placeholder="Group name (e.g. Burger Places)"
+        value={name} onChange={e=>setName(e.target.value)} />
+
+      <div style={{color:C.muted,fontSize:11,marginBottom:6}}>
+        Select 2+ restaurants — visiting any ONE locks out the whole group:
+      </div>
+      <input style={{...inp,fontSize:12,padding:'6px 10px',marginBottom:6}}
+        placeholder="Search restaurants..." value={search} onChange={e=>setSearch(e.target.value)} />
+      <div style={{maxHeight:200,overflowY:'auto',border:`1px solid ${C.border}`,borderRadius:8,marginBottom:10}}>
+        {shown.map(r=>{
+          const on=selIds.includes(r.id);
+          return (
+            <div key={r.id} onClick={()=>toggle(r.id)}
+              style={{display:'flex',alignItems:'center',gap:10,padding:'9px 12px',cursor:'pointer',
+                borderBottom:`1px solid #0a0f1a`,background:on?'#0d1827':'transparent'}}>
+              <div style={{width:18,height:18,borderRadius:4,border:`2px solid ${on?C.blue:'#334155'}`,
+                background:on?'#1d4ed8':'transparent',display:'flex',alignItems:'center',
+                justifyContent:'center',color:'#fff',fontSize:11,flexShrink:0}}>{on?'✓':''}</div>
+              <div>
+                <div style={{color:on?C.text:'#64748b',fontSize:13}}>{r.name}</div>
+                <div style={{color:'#334155',fontSize:10}}>{CAT_LABELS[r.category]}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {selIds.length>0&&(
+        <div style={{color:C.cyan,fontSize:11,marginBottom:8}}>
+          {selIds.length} selected: {selIds.map(id=>{const r=restaurants.find(x=>x.id===id);return r?.name;}).filter(Boolean).join(', ')}
+        </div>
+      )}
+
+      <div style={{color:C.muted,fontSize:11,marginBottom:6}}>Group frequency (shared limit):</div>
+      <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}}>
+        {[[7,'Every week'],[14,'Every 2 wks'],[30,'Once/month']].map(([d,l])=>(
+          <button key={d} style={pill(freq===d)} onClick={()=>setFreq(d)}>{l}</button>
+        ))}
+        <button style={pill(![7,14,30].includes(freq))} onClick={()=>{
+          const d=parseInt(window.prompt('Minimum days between group visits:'));
+          if(d>0)setFreq(d);
+        }}>Custom{![7,14,30].includes(freq)?` (${freq}d)`:''}</button>
+      </div>
+
+      <div style={{display:'flex',gap:8}}>
+        <button style={{...btn('#1e293b',C.mid),flex:1}} onClick={onCancel}>Cancel</button>
+        <button style={{...btn('#1d4ed8','#fff'),flex:2,opacity:(name.trim()&&selIds.length>=2)?1:0.4}}
+          onClick={save} disabled={!name.trim()||selIds.length<2}>
+          {group?'Update Group':'Save Group'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// SETTINGS TAB
+// ══════════════════════════════════════════════
+function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, onDeleteR, onAddGroup, onUpdateGroup, onDeleteGroup, onSync, syncStatus }) {
+  const [section, setSection] = React.useState('restaurants'); // 'restaurants'|'groups'|'add'
+  const [catFilter, setCatFilter] = React.useState('all');
+  const [editingFreqId, setEditingFreqId] = React.useState(null);
+  const [editingTagId, setEditingTagId] = React.useState(null);
+  const [editingGroup, setEditingGroup] = React.useState(null); // null|'new'|groupObj
+  // Add restaurant section
+  const [showAddFrom, setShowAddFrom] = React.useState(''); // ''|'db'|'custom'|'places'
+  const [dbSearch, setDbSearch] = React.useState('');
+  const [newName, setNewName] = React.useState('');
+  const [newCat, setNewCat] = React.useState('fast_food');
+  const [newFreq, setNewFreq] = React.useState(30);
+  // Google Places
+  const [placesKey, setPlacesKey] = React.useState(loadLocal().placesKey||'');
+  const [placesQuery, setPlacesQuery] = React.useState('');
+  const [placesResults, setPlacesResults] = React.useState([]);
+  const [placesLoading, setPlacesLoading] = React.useState(false);
+  const [placesErr, setPlacesErr] = React.useState('');
+
+  const trackedIds = new Set(restaurants.map(r=>r.id));
+  const untracked = getAvailableForState(stateCode).filter(r=>!trackedIds.has(r.id));
+  const dbFiltered = untracked.filter(r=>!dbSearch||r.name.toLowerCase().includes(dbSearch.toLowerCase()));
+  const trackedFiltered = catFilter==='all'?restaurants:restaurants.filter(r=>r.category===catFilter);
+
+  async function doPlacesSearch() {
+    if(!placesQuery.trim()||!placesKey.trim()) return;
+    setPlacesLoading(true); setPlacesErr(''); setPlacesResults([]);
+    try {
+      saveLocal({...loadLocal(),placesKey});
+      await loadMapsAPI(placesKey);
+      const loc = await geocodeZip(zip);
+      const res = await searchPlaces(placesQuery, loc);
+      setPlacesResults(res.slice(0,10));
+      if(res.length===0) setPlacesErr('No results found. Try a different search.');
+    } catch(e) { setPlacesErr('Error: '+e.message+'. Check your API key.'); }
+    setPlacesLoading(false);
+  }
+
+  function addFromPlaces(p) {
+    const id = 'places_'+(p.place_id||Date.now());
+    onAddR({ id, name:p.name, category:'fast_food', frequency_days:'30', tags:'', active:'true', custom:'true' });
+    setPlacesResults(prev=>prev.filter(x=>x.place_id!==p.place_id));
+  }
+
+  function addCustom() {
+    if(!newName.trim()) return;
+    onAddR({ id:'custom_'+Date.now(), name:newName.trim(), category:newCat, frequency_days:String(newFreq), tags:'', active:'true', custom:'true' });
+    setNewName(''); setNewCat('fast_food'); setNewFreq(30); setShowAddFrom('');
+  }
+
+  const secBtn = (k,l) => (
+    <button key={k} onClick={()=>setSection(k)} style={{
+      flex:1,padding:'9px 4px',background:'none',border:'none',
+      borderBottom:`2px solid ${section===k?C.blue:'transparent'}`,
+      color:section===k?'#93c5fd':C.muted,fontSize:12,cursor:'pointer',fontFamily:'Georgia,serif',fontWeight:section===k?700:400
+    }}>{l}</button>
+  );
+
+  return (
+    <div style={{paddingBottom:80,fontFamily:'Georgia,serif'}}>
+      {/* Header card */}
+      <div style={{background:C.bar,borderBottom:`1px solid ${C.border}`,padding:'10px 14px'}}>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <div style={{display:'flex',alignItems:'center',gap:10}}>
+            <span style={{fontSize:20}}>📍</span>
+            <div>
+              <div style={{color:C.text,fontSize:14,fontWeight:700}}>ZIP {zip} · {stateCode}</div>
+              <div style={{color:C.muted,fontSize:11}}>{restaurants.length} restaurants · {groups.length} groups</div>
+            </div>
+          </div>
+          <div style={{display:'flex',alignItems:'center',gap:8}}>
+            <div style={{color:C.muted,fontSize:10,textAlign:'right'}}>{syncStatus}</div>
+            <button style={{...btn('#1e293b',C.mid,true)}} onClick={onSync}>☁️ Sync</button>
+          </div>
+        </div>
+        {/* Section tabs */}
+        <div style={{display:'flex',marginTop:10,borderTop:`1px solid ${C.border}`,paddingTop:8}}>
+          {secBtn('restaurants','🍴 Restaurants')}
+          {secBtn('groups','🔗 Groups')}
+          {secBtn('add','+ Add')}
+        </div>
+      </div>
+
+      <div style={{padding:'10px 12px'}}>
+
+        {/* ── RESTAURANTS SECTION ── */}
+        {section==='restaurants'&&(
+          <>
+            <div style={{display:'flex',gap:6,overflowX:'auto',marginBottom:10,paddingBottom:2}}>
+              {[['all','All'],['fast_food','🍔'],['casual','🍴'],['sit_down','🍷']].map(([k,l])=>(
+                <button key={k} style={pill(catFilter===k)} onClick={()=>setCatFilter(k)}>{l} {k==='all'?'':''}</button>
+              ))}
+            </div>
+            {trackedFiltered.map(r=>{
+              const active=r.active==='true'||r.active===true;
+              const custom=r.custom==='true'||r.custom===true;
+              const editingFreq=editingFreqId===r.id;
+              const editingTag=editingTagId===r.id;
+              const freq=parseInt(r.frequency_days||30);
+              const myGroups=groups.filter(g=>getGroupIds(g).includes(r.id));
+              return (
+                <div key={r.id} style={card({borderColor:active?C.bBlue:C.border})}>
+                  <div style={{display:'flex',alignItems:'center',gap:10}}>
+                    <div onClick={()=>onUpdateR({...r,active:String(!active)})} style={{
+                      width:22,height:22,borderRadius:5,flexShrink:0,cursor:'pointer',
+                      border:`2px solid ${active?C.blue:'#334155'}`,background:active?'#1d4ed8':'transparent',
+                      display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',fontSize:12
+                    }}>{active?'✓':''}</div>
+                    <div style={{flex:1}}>
+                      <div style={{color:active?C.text:'#475569',fontSize:13,fontWeight:700}}>
+                        {r.name}
+                        {custom&&<span style={{color:C.orange,fontSize:9,marginLeft:5}}>CUSTOM</span>}
+                      </div>
+                      <div style={{color:C.muted,fontSize:11}}>{CAT_LABELS[r.category]}</div>
+                      {myGroups.length>0&&<div style={{color:'#7c3aed',fontSize:10,marginTop:2}}>
+                        🔗 {myGroups.map(g=>g.name).join(', ')}
+                      </div>}
+                    </div>
+                    <button onClick={()=>setEditingFreqId(editingFreq?null:r.id)}
+                      style={{...btn('#1e293b',C.mid,true)}}>{freq}d</button>
+                    <button onClick={()=>setEditingTagId(editingTag?null:r.id)}
+                      style={{...btn('#1e293b',C.mid,true)}}>🏷</button>
+                    {custom&&<button onClick={()=>{if(window.confirm(`Remove ${r.name}?`))onDeleteR(r.id);}}
+                      style={{background:'none',border:'none',color:'#7f1d1d',cursor:'pointer',fontSize:16,padding:2}}>✕</button>}
+                  </div>
+                  {editingTag&&(
+                    <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                      <div style={{color:C.muted,fontSize:11,marginBottom:6}}>Food type tags:</div>
+                      <TagChips tags={r.tags||''} editable={true} onChange={tags=>onUpdateR({...r,tags})} />
+                    </div>
+                  )}
+                  {editingFreq&&(
+                    <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                      <div style={{color:C.muted,fontSize:11,marginBottom:6}}>Change frequency:</div>
+                      <div style={{display:'flex',flexWrap:'wrap',gap:6}}>
+                        {[[7,'7d'],[14,'14d'],[30,'30d']].map(([d,l])=>(
+                          <button key={d} style={pill(freq===d)} onClick={()=>{onUpdateR({...r,frequency_days:String(d)});setEditingFreqId(null);}}>{l}</button>
+                        ))}
+                        <button style={pill(![7,14,30].includes(freq))} onClick={()=>{
+                          const d=parseInt(window.prompt('Days between visits:'));
+                          if(d>0){onUpdateR({...r,frequency_days:String(d)});setEditingFreqId(null);}
+                        }}>Custom{![7,14,30].includes(freq)?` (${freq}d)`:''}</button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* ── GROUPS SECTION ── */}
+        {section==='groups'&&(
+          <>
+            {editingGroup===null&&(
+              <button style={{...btn('#1e3a5f','#93c5fd'),width:'100%',marginBottom:12}}
+                onClick={()=>setEditingGroup('new')}>+ Create New Group</button>
+            )}
+            {(editingGroup==='new'||typeof editingGroup==='object')&&editingGroup&&(
+              <GroupForm
+                restaurants={restaurants}
+                group={editingGroup==='new'?null:editingGroup}
+                onSave={g=>{
+                  if(editingGroup==='new')onAddGroup(g);
+                  else onUpdateGroup(g);
+                  setEditingGroup(null);
+                }}
+                onCancel={()=>setEditingGroup(null)}
+              />
+            )}
+            {groups.length===0&&editingGroup===null&&(
+              <div style={{textAlign:'center',padding:40,color:C.muted}}>
+                <div style={{fontSize:28,marginBottom:8}}>🔗</div>
+                <div>No groups yet.</div>
+                <div style={{fontSize:12,marginTop:4}}>Groups let you share a visit limit across multiple restaurants — e.g. "Burger Places: once a month total".</div>
+              </div>
+            )}
+            {groups.filter(()=>editingGroup===null||typeof editingGroup==='object').map(g=>{
+              const ids=getGroupIds(g);
+              const members=ids.map(id=>restaurants.find(r=>r.id===id)).filter(Boolean);
+              return (
+                <div key={g.id} style={card({borderColor:'#581c87'})}>
+                  <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:6}}>
+                    <div>
+                      <div style={{color:'#c4b5fd',fontSize:14,fontWeight:700}}>🔗 {g.name}</div>
+                      <div style={{color:C.muted,fontSize:11}}>Every {g.frequency_days} days · {ids.length} restaurants</div>
+                    </div>
+                    <div style={{display:'flex',gap:6}}>
+                      <button style={{...btn('#1e293b',C.mid,true)}} onClick={()=>setEditingGroup(g)}>Edit</button>
+                      <button style={{...btn('#1e293b',C.red,true)}}
+                        onClick={()=>{if(window.confirm(`Delete group "${g.name}"?`))onDeleteGroup(g.id);}}>✕</button>
+                    </div>
+                  </div>
+                  <div style={{display:'flex',flexWrap:'wrap',gap:4}}>
+                    {members.map(r=>(
+                      <span key={r.id} style={{background:'#1e293b',borderRadius:10,padding:'2px 8px',
+                        fontSize:11,color:C.mid}}>{r.name}</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </>
+        )}
+
+        {/* ── ADD SECTION ── */}
+        {section==='add'&&(
+          <>
+            <div style={{display:'flex',flexDirection:'column',gap:8,marginBottom:12}}>
+              {[['db','📋 Add from Chain List'],['places','🔍 Search Google Places'],['custom','✏️ Add Custom Restaurant']].map(([k,l])=>(
+                <button key={k} style={{...btn(showAddFrom===k?C.bBlue:'#1e293b',showAddFrom===k?'#93c5fd':C.mid),textAlign:'left'}}
+                  onClick={()=>setShowAddFrom(showAddFrom===k?'':k)}>{l}</button>
+              ))}
+            </div>
+
+            {/* From chain database */}
+            {showAddFrom==='db'&&(
+              <div style={card({borderColor:C.bBlue})}>
+                <div style={{color:C.mid,fontSize:13,fontWeight:700,marginBottom:8}}>Add from Chain Database</div>
+                <input style={{...inp,marginBottom:8,fontSize:13,padding:'7px 12px'}}
+                  placeholder="Search chains..." value={dbSearch} onChange={e=>setDbSearch(e.target.value)} />
+                {dbFiltered.slice(0,12).map(r=>(
+                  <div key={r.id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:`1px solid #0f172a`}}>
+                    <div>
+                      <div style={{color:C.text,fontSize:13}}>{r.name}</div>
+                      <div style={{color:C.muted,fontSize:10}}>{CAT_LABELS[r.category]}{FOOD_TAGS[r.id]?' · '+FOOD_TAGS[r.id].replace(/,/g,', '):''}</div>
+                    </div>
+                    <button style={{...btn(C.bBlue,'#93c5fd',true)}}
+                      onClick={()=>onAddR({...r,frequency_days:'30',tags:FOOD_TAGS[r.id]||'',active:'true',custom:'false'})}>Add</button>
+                  </div>
+                ))}
+                {dbFiltered.length===0&&<div style={{color:C.muted,fontSize:12,textAlign:'center',padding:8}}>All available chains already added</div>}
+              </div>
+            )}
+
+            {/* Google Places search */}
+            {showAddFrom==='places'&&(
+              <div style={card({borderColor:C.bBlue})}>
+                <div style={{color:C.mid,fontSize:13,fontWeight:700,marginBottom:4}}>🔍 Search Google Places</div>
+                <div style={{color:C.muted,fontSize:11,marginBottom:10}}>
+                  Find any restaurant near {zip}. Requires a Google Maps API key with Places enabled.
+                  <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style={{color:C.cyan,marginLeft:4}}>Get one →</a>
+                </div>
+                <input style={{...inp,marginBottom:6,fontSize:13}} placeholder="Google Maps API key"
+                  value={placesKey} onChange={e=>setPlacesKey(e.target.value)} type="password" />
+                <div style={{display:'flex',gap:6,marginBottom:8}}>
+                  <input style={{...inp,flex:1,fontSize:13}} placeholder='e.g. "Shake Shack" or "sushi"'
+                    value={placesQuery} onChange={e=>setPlacesQuery(e.target.value)}
+                    onKeyDown={e=>e.key==='Enter'&&doPlacesSearch()} />
+                  <button style={{...btn('#1d4ed8','#fff',true),whiteSpace:'nowrap',opacity:(!placesKey||!placesQuery||placesLoading)?0.5:1}}
+                    onClick={doPlacesSearch} disabled={!placesKey||!placesQuery||placesLoading}>
+                    {placesLoading?'…':'Search'}
+                  </button>
+                </div>
+                {placesErr&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{placesErr}</div>}
+                {placesResults.map(p=>{
+                  const alreadyAdded=trackedIds.has('places_'+p.place_id)||restaurants.some(r=>r.name.toLowerCase()===p.name.toLowerCase());
+                  return (
+                    <div key={p.place_id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:`1px solid #0f172a`}}>
+                      <div>
+                        <div style={{color:C.text,fontSize:13}}>{p.name}</div>
+                        <div style={{color:C.muted,fontSize:11}}>{p.formatted_address?.split(',').slice(0,2).join(',')}</div>
+                      </div>
+                      {alreadyAdded?<span style={{color:'#22c55e',fontSize:11}}>✓ Added</span>:
+                        <button style={{...btn(C.bBlue,'#93c5fd',true)}} onClick={()=>addFromPlaces(p)}>Add</button>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            {/* Custom restaurant */}
+            {showAddFrom==='custom'&&(
+              <div style={card({borderColor:C.bBlue})}>
+                <div style={{color:C.mid,fontSize:13,fontWeight:700,marginBottom:10}}>Add Custom Restaurant</div>
+                <input style={{...inp,marginBottom:8}} placeholder="Restaurant name" value={newName} onChange={e=>setNewName(e.target.value)} />
+                <select style={{...inp,marginBottom:8}} value={newCat} onChange={e=>setNewCat(e.target.value)}>
+                  <option value="fast_food">Fast Food</option>
+                  <option value="casual">Casual Dining</option>
+                  <option value="sit_down">Sit-Down</option>
+                </select>
+                <div style={{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}}>
+                  {[[7,'Weekly'],[14,'Biweekly'],[30,'Monthly']].map(([d,l])=>(
+                    <button key={d} style={pill(newFreq===d)} onClick={()=>setNewFreq(d)}>{l}</button>
+                  ))}
+                  <button style={pill(![7,14,30].includes(newFreq))} onClick={()=>{
+                    const d=parseInt(window.prompt('Minimum days:')); if(d>0)setNewFreq(d);
+                  }}>Custom{![7,14,30].includes(newFreq)?` (${newFreq}d)`:''}</button>
+                </div>
+                <button style={{...btn('#1d4ed8','#fff'),width:'100%'}} onClick={addCustom}>Add Restaurant</button>
+              </div>
+            )}
+          </>
+        )}
+
+      </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// MAIN APP
+// ══════════════════════════════════════════════
+function App() {
+  const [screen, setScreen] = React.useState('loading');
+  const [tab, setTab] = React.useState('suggest');
+  const [zip, setZip] = React.useState('');
+  const [stateCode, setStateCode] = React.useState('');
+  const [restaurants, setRestaurants] = React.useState([]);
+  const [visits, setVisits] = React.useState([]);
+  const [groups, setGroups] = React.useState([]);
+  const [loaded, setLoaded] = React.useState(false);
+  const [syncStatus, setSyncStatus] = React.useState('');
+  const [logPre, setLogPre] = React.useState(null);
+
+  React.useEffect(()=>{
+    const loc = loadLocal();
+    if(loc.zip&&loc.stateCode){
+      setZip(loc.zip); setStateCode(loc.stateCode);
+      setRestaurants(loc.restaurants||[]); setVisits(loc.visits||[]); setGroups(loc.groups||[]);
+      setScreen('app');
+    } else setScreen('onboarding');
+    setLoaded(true);
+  },[]);
+
+  React.useEffect(()=>{
+    if(!loaded||screen==='loading') return;
+    saveLocal({ zip, stateCode, restaurants, visits, groups, placesKey: loadLocal().placesKey||'' });
+  },[zip,stateCode,restaurants,visits,groups,loaded]);
+
+  function onComplete({ zip:z, state:st, restaurants:rs }) {
+    setZip(z); setStateCode(st); setRestaurants(rs); setVisits([]); setGroups([]); setScreen('app');
+  }
+
+  function saveVisit(v) { setVisits(vs=>[v,...vs.filter(x=>x.id!==v.id)]); api({action:'save_visit',...v}); }
+  function deleteVisit(id) { setVisits(vs=>vs.filter(x=>x.id!==id)); api({action:'delete_visit',id}); }
+
+  function updateR(r) {
+    setRestaurants(rs=>rs.map(x=>x.id===r.id?{...r,frequency_days:String(r.frequency_days)}:x));
+    api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
+  }
+  function addR(r) {
+    setRestaurants(rs=>[...rs.filter(x=>x.id!==r.id),r]);
+    api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
+  }
+  function deleteR(id) { setRestaurants(rs=>rs.filter(r=>r.id!==id)); api({action:'delete_restaurant',id}); }
+
+  function addGroup(g) {
+    setGroups(gs=>[...gs.filter(x=>x.id!==g.id),{...g,restaurant_ids:g.restaurant_ids}]);
+    api({action:'save_group',...g,restaurant_ids:g.restaurant_ids.join(',')});
+  }
+  function updateGroup(g) {
+    setGroups(gs=>gs.map(x=>x.id===g.id?g:x));
+    api({action:'save_group',...g,restaurant_ids:g.restaurant_ids.join(',')});
+  }
+  function deleteGroup(id) { setGroups(gs=>gs.filter(g=>g.id!==id)); api({action:'delete_group',id}); }
+
+  async function doSync() {
+    setSyncStatus('Syncing...');
+    try {
+      const res = await api({action:'get_all'});
+      if(res?.ok) {
+        for(const r of restaurants) await api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
+        for(const v of visits) await api({action:'save_visit',...v});
+        for(const g of groups) await api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids});
+        await api({action:'save_setting',key:'zip',value:zip});
+        await api({action:'save_setting',key:'state',value:stateCode});
+        setSyncStatus('✓ Synced '+new Date().toLocaleTimeString());
+      } else setSyncStatus('⚠ Could not reach Sheets');
+    } catch(e) { setSyncStatus('⚠ Error'); }
+  }
+
+  if(screen==='loading') return (
+    <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <div style={{color:C.muted}}>Loading...</div>
+    </div>
+  );
+  if(screen==='onboarding') return <OnboardingScreen onComplete={onComplete} />;
+
+  return (
+    <div style={{minHeight:'100vh',background:C.bg,color:C.text,fontFamily:'Georgia,serif'}}>
+      <div style={{background:C.bar,borderBottom:`1px solid ${C.border}`,padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+        <div style={{fontSize:16,fontWeight:700}}>🍽 Eat Tracker</div>
+        <div style={{color:C.muted,fontSize:11}}>📍 {zip} · {stateCode}</div>
+      </div>
+
+      {tab==='suggest'&&<SuggestTab restaurants={restaurants} visits={visits} groups={groups} onLogVisit={r=>{setLogPre(r);setTab('log');}} />}
+      {tab==='log'&&<LogTab restaurants={restaurants} visits={visits} onSaveVisit={saveVisit}
+        onDeleteVisit={deleteVisit} preSelected={logPre} onClearPre={()=>setLogPre(null)} />}
+      {tab==='settings'&&<SettingsTab zip={zip} stateCode={stateCode} restaurants={restaurants} groups={groups}
+        onUpdateR={updateR} onAddR={addR} onDeleteR={deleteR}
+        onAddGroup={addGroup} onUpdateGroup={updateGroup} onDeleteGroup={deleteGroup}
+        onSync={doSync} syncStatus={syncStatus} />}
+
+      <div style={{position:'fixed',bottom:0,left:0,right:0,background:C.bar,borderTop:`1px solid ${C.border}`,display:'flex',zIndex:200}}>
+        {[['suggest','💡','Suggest'],['log','📝','Log'],['settings','⚙️','Settings']].map(([k,ic,lb])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{
+            flex:1,padding:'10px 4px 13px',background:'none',border:'none',
+            borderTop:`2px solid ${tab===k?C.blue:'transparent'}`,
+            color:tab===k?'#93c5fd':C.muted,fontSize:10,cursor:'pointer',
+            fontWeight:tab===k?700:400,fontFamily:'Georgia,serif',
+            display:'flex',flexDirection:'column',alignItems:'center',gap:2
+          }}>
+            <span style={{fontSize:18}}>{ic}</span>{lb}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
+</script>
+</body>
+</html>
