@@ -133,7 +133,15 @@ const RESTAURANT_DB = [
 ];
 
 // ── Core utilities ──
+function getBackendUrl() {
+  const stored = loadLocal().backendUrl;
+  // Use stored URL if set, else fall back to the hardcoded constant
+  return (stored && stored.includes('script.google.com')) ? stored : BACKEND;
+}
+
 function api(params) {
+  const url = getBackendUrl();
+  if (!url || !url.includes('script.google.com')) return Promise.resolve(null);
   return new Promise((resolve) => {
     const cb = 'cb_' + Math.random().toString(36).slice(2);
     const qs = Object.entries({...params, callback:cb})
@@ -141,7 +149,7 @@ function api(params) {
     const s = document.createElement('script');
     const t = setTimeout(() => { delete window[cb]; s.remove(); resolve(null); }, 12000);
     window[cb] = (d) => { clearTimeout(t); delete window[cb]; s.remove(); resolve(d); };
-    s.src = `${BACKEND}?${qs}`; document.head.appendChild(s);
+    s.src = `${url}?${qs}`; document.head.appendChild(s);
   });
 }
 function loadLocal() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY))||{}; } catch(e) { return {}; } }
@@ -200,10 +208,25 @@ function loadMapsAPI(key) {
     if(_mapsLoaded){resolve();return;}
     if(_mapsLoading){_mapsCbs.push({resolve,reject});return;}
     _mapsLoading=true; _mapsCbs.push({resolve,reject});
-    window.__mapsReady=()=>{ _mapsLoaded=true; _mapsCbs.forEach(c=>c.resolve()); _mapsCbs=[]; };
+
+    // Timeout — fires if Maps API never calls back (API not enabled, bad key, etc.)
+    const tout = setTimeout(()=>{
+      _mapsLoading=false;
+      _mapsCbs.forEach(c=>c.reject(new Error('Maps API timed out. Make sure "Maps JavaScript API" and "Places API" are both enabled in Google Cloud Console → Library.')));
+      _mapsCbs=[];
+    }, 10000);
+
+    window.__mapsReady=()=>{
+      clearTimeout(tout);
+      _mapsLoaded=true; _mapsCbs.forEach(c=>c.resolve()); _mapsCbs=[];
+    };
     const s=document.createElement('script');
-    s.src=`https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(key)}&libraries=places&callback=__mapsReady`;
-    s.onerror=()=>{ _mapsCbs.forEach(c=>c.reject(new Error('Maps failed'))); _mapsCbs=[]; };
+    s.src=`https://maps.googleapis.com/maps/api/js?key=${key}&libraries=places&callback=__mapsReady`;
+    s.onerror=()=>{
+      clearTimeout(tout);
+      _mapsLoading=false;
+      _mapsCbs.forEach(c=>c.reject(new Error('Failed to load Maps API. Check your API key.'))); _mapsCbs=[];
+    };
     document.head.appendChild(s);
   });
 }
@@ -680,6 +703,15 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
   const [placesResults, setPlacesResults] = React.useState([]);
   const [placesLoading, setPlacesLoading] = React.useState(false);
   const [placesErr, setPlacesErr] = React.useState('');
+  // Backend URL (editable from Settings)
+  const [backendInput, setBackendInput] = React.useState(loadLocal().backendUrl || BACKEND || '');
+  const [backendSaved, setBackendSaved] = React.useState(false);
+
+  function saveBackendUrl() {
+    const url = backendInput.trim();
+    saveLocal({...loadLocal(), backendUrl: url});
+    setBackendSaved(true); setTimeout(()=>setBackendSaved(false), 2000);
+  }
 
   const trackedIds = new Set(restaurants.map(r=>r.id));
   const untracked = getAvailableForState(stateCode).filter(r=>!trackedIds.has(r.id));
@@ -733,8 +765,19 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
             </div>
           </div>
           <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <div style={{color:C.muted,fontSize:10,textAlign:'right'}}>{syncStatus}</div>
+            <div style={{color: syncStatus.includes('⚠')?C.orange:syncStatus.includes('✓')?C.green:C.muted, fontSize:10, textAlign:'right', maxWidth:120}}>{syncStatus}</div>
             <button style={{...btn('#1e293b',C.mid,true)}} onClick={onSync}>☁️ Sync</button>
+          </div>
+        </div>
+        {/* Backend URL config */}
+        <div style={{marginTop:10,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+          <div style={{color:C.muted,fontSize:11,marginBottom:5}}>Apps Script URL <span style={{color:'#334155'}}>(paste your /exec URL to enable sync)</span></div>
+          <div style={{display:'flex',gap:6}}>
+            <input style={{...inp,flex:1,fontSize:11,padding:'6px 10px'}}
+              placeholder="https://script.google.com/macros/s/.../exec"
+              value={backendInput} onChange={e=>setBackendInput(e.target.value)} />
+            <button style={{...btn(backendSaved?'#166534':'#1e3a5f',backendSaved?'#4ade80':'#93c5fd',true), whiteSpace:'nowrap'}}
+              onClick={saveBackendUrl}>{backendSaved?'✓ Saved':'Save'}</button>
           </div>
         </div>
         {/* Section tabs */}
@@ -1020,6 +1063,7 @@ function App() {
   function deleteGroup(id) { setGroups(gs=>gs.filter(g=>g.id!==id)); api({action:'delete_group',id}); }
 
   async function doSync() {
+    if (!getBackendUrl()) { setSyncStatus('⚠ No URL — paste your Apps Script URL in Settings'); return; }
     setSyncStatus('Syncing...');
     try {
       const res = await api({action:'get_all'});
@@ -1030,8 +1074,8 @@ function App() {
         await api({action:'save_setting',key:'zip',value:zip});
         await api({action:'save_setting',key:'state',value:stateCode});
         setSyncStatus('✓ Synced '+new Date().toLocaleTimeString());
-      } else setSyncStatus('⚠ Could not reach Sheets');
-    } catch(e) { setSyncStatus('⚠ Error'); }
+      } else setSyncStatus('⚠ URL unreachable — check Apps Script is deployed as "Anyone"');
+    } catch(e) { setSyncStatus('⚠ Error: '+e.message); }
   }
 
   if(screen==='loading') return (
@@ -1073,7 +1117,4 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(App));
-</script>
-</body>
-</html>
+ReactDOM.createRoot(docume
