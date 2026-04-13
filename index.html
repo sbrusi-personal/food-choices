@@ -324,6 +324,11 @@ function OnboardingScreen({ onComplete }) {
   const [configs, setConfigs] = React.useState({});
   const [catTab, setCatTab] = React.useState('fast_food');
   const [search, setSearch] = React.useState('');
+  // Cloud restore during onboarding
+  const [showRestore, setShowRestore] = React.useState(false);
+  const [restoreUrl, setRestoreUrl] = React.useState('');
+  const [restoreStatus, setRestoreStatus] = React.useState('');
+  const [restoring, setRestoring] = React.useState(false);
 
   function handleZip() {
     const st = zipToState(zipInput);
@@ -332,6 +337,33 @@ function OnboardingScreen({ onComplete }) {
     const init = {};
     avail.forEach(r => { init[r.id] = { active:false, frequency_days:30 }; });
     setDetState(st); setDbRests(avail); setConfigs(init); setZipErr(''); setStep(2);
+  }
+
+  async function handleCloudRestore() {
+    if (!restoreUrl.includes('script.google.com')) { setRestoreStatus('⚠ Paste your full Apps Script /exec URL'); return; }
+    setRestoring(true); setRestoreStatus('Connecting…');
+    // Temporarily store the URL so api() can use it
+    saveLocal({...loadLocal(), backendUrl: restoreUrl});
+    try {
+      const res = await api({action:'get_all'});
+      if (res?.ok) {
+        const cfg = {};
+        (res.settings||[]).forEach(s=>{ cfg[s.key]=s.value; });
+        const groups = (res.groups||[]).map(g=>({
+          ...g,
+          restaurant_ids: typeof g.restaurant_ids==='string'
+            ? g.restaurant_ids.split(',').filter(Boolean)
+            : (g.restaurant_ids||[])
+        }));
+        onComplete({
+          zip: cfg.zip||'00000', state: cfg.state||'??',
+          restaurants: res.restaurants||[], visits: res.visits||[], groups
+        });
+      } else {
+        setRestoreStatus('⚠ Could not reach Sheets — check the URL and redeploy as "Anyone"');
+        setRestoring(false);
+      }
+    } catch(e) { setRestoreStatus('⚠ Error: '+e.message); setRestoring(false); }
   }
 
   function toggle(id) { setConfigs(c=>({...c,[id]:{...c[id],active:!c[id].active}})); }
@@ -369,6 +401,27 @@ function OnboardingScreen({ onComplete }) {
           <button style={{...btn('#1d4ed8','#fff'),width:'100%',marginTop:4,opacity:zipInput.length!==5?0.4:1}}
             onClick={handleZip} disabled={zipInput.length!==5}>Continue →</button>
         </div>
+
+        {/* Cloud restore shortcut */}
+        <div style={{marginTop:16,textAlign:'center'}}>
+          <button onClick={()=>setShowRestore(!showRestore)}
+            style={{background:'none',border:'none',color:C.muted,fontSize:12,cursor:'pointer',textDecoration:'underline'}}>
+            Already set up on another device? Restore from cloud ↓
+          </button>
+        </div>
+        {showRestore&&(
+          <div style={{background:C.card,border:`1px solid ${C.border}`,borderRadius:14,padding:16,marginTop:8}}>
+            <div style={{color:C.mid,fontSize:12,marginBottom:8}}>Paste your Apps Script URL to restore all your data:</div>
+            <input style={{...inp,fontSize:11,marginBottom:8}}
+              placeholder="https://script.google.com/macros/s/.../exec"
+              value={restoreUrl} onChange={e=>setRestoreUrl(e.target.value)} />
+            {restoreStatus&&<div style={{color:restoreStatus.includes('⚠')?C.orange:C.green,fontSize:12,marginBottom:8}}>{restoreStatus}</div>}
+            <button style={{...btn('#1e3a5f','#7dd3fc'),width:'100%',opacity:restoring?0.5:1}}
+              onClick={handleCloudRestore} disabled={restoring}>
+              {restoring?'Restoring…':'↓ Restore from Cloud'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -692,7 +745,7 @@ function GroupForm({ restaurants, group, onSave, onCancel }) {
 // ══════════════════════════════════════════════
 // SETTINGS TAB
 // ══════════════════════════════════════════════
-function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, onDeleteR, onAddGroup, onUpdateGroup, onDeleteGroup, onSync, syncStatus }) {
+function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, onDeleteR, onAddGroup, onUpdateGroup, onDeleteGroup, onSync, onRestore, syncStatus }) {
   const [section, setSection] = React.useState('restaurants'); // 'restaurants'|'groups'|'add'
   const [catFilter, setCatFilter] = React.useState('all');
   const [editingFreqId, setEditingFreqId] = React.useState(null);
@@ -771,9 +824,10 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
               <div style={{color:C.muted,fontSize:11}}>{restaurants.length} restaurants · {groups.length} groups</div>
             </div>
           </div>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            <div style={{color: syncStatus.includes('⚠')?C.orange:syncStatus.includes('✓')?C.green:C.muted, fontSize:10, textAlign:'right', maxWidth:120}}>{syncStatus}</div>
-            <button style={{...btn('#1e293b',C.mid,true)}} onClick={onSync}>☁️ Sync</button>
+          <div style={{display:'flex',alignItems:'center',gap:6}}>
+            <div style={{color: syncStatus.includes('⚠')?C.orange:syncStatus.includes('✓')?C.green:C.muted, fontSize:10, textAlign:'right', maxWidth:110}}>{syncStatus}</div>
+            <button style={{...btn('#1e293b',C.mid,true)}} onClick={onSync}>☁ Push</button>
+            <button style={{...btn('#1e293b','#7dd3fc',true)}} onClick={onRestore} title="Pull all data from Google Sheets to this device">↓ Pull</button>
           </div>
         </div>
         {/* Backend URL config */}
@@ -1049,8 +1103,8 @@ function App() {
     saveLocal({ zip, stateCode, restaurants, visits, groups, placesKey: loadLocal().placesKey||'' });
   },[zip,stateCode,restaurants,visits,groups,loaded]);
 
-  function onComplete({ zip:z, state:st, restaurants:rs }) {
-    setZip(z); setStateCode(st); setRestaurants(rs); setVisits([]); setGroups([]); setScreen('app');
+  function onComplete({ zip:z, state:st, restaurants:rs, visits:vs=[], groups:gs=[] }) {
+    setZip(z); setStateCode(st); setRestaurants(rs); setVisits(vs); setGroups(gs); setScreen('app');
   }
 
   function saveVisit(v) { setVisits(vs=>[v,...vs.filter(x=>x.id!==v.id)]); api({action:'save_visit',...v}); }
@@ -1092,6 +1146,34 @@ function App() {
     } catch(e) { setSyncStatus('⚠ Error: '+e.message); }
   }
 
+  async function doRestore() {
+    if (!getBackendUrl()) { setSyncStatus('⚠ No URL — paste your Apps Script URL in Settings first'); return; }
+    if (!window.confirm('Replace all local data with what\'s saved in Google Sheets?\n\nThis will overwrite your restaurants, visits, and groups on this device.')) return;
+    setSyncStatus('Restoring...');
+    try {
+      const res = await api({action:'get_all'});
+      if (res?.ok) {
+        if (res.restaurants?.length) setRestaurants(res.restaurants);
+        if (res.visits?.length) setVisits(res.visits);
+        if (res.groups?.length) {
+          setGroups(res.groups.map(g=>({
+            ...g,
+            restaurant_ids: typeof g.restaurant_ids==='string'
+              ? g.restaurant_ids.split(',').filter(Boolean)
+              : (g.restaurant_ids||[])
+          })));
+        }
+        const cfg = {};
+        (res.settings||[]).forEach(s=>{ cfg[s.key]=s.value; });
+        if (cfg.zip) setZip(cfg.zip);
+        if (cfg.state) setStateCode(cfg.state);
+        setSyncStatus('✓ Restored '+new Date().toLocaleTimeString());
+      } else {
+        setSyncStatus('⚠ URL unreachable — check Apps Script is deployed as "Anyone"');
+      }
+    } catch(e) { setSyncStatus('⚠ Error: '+e.message); }
+  }
+
   if(screen==='loading') return (
     <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
       <div style={{color:C.muted}}>Loading...</div>
@@ -1112,7 +1194,7 @@ function App() {
       {tab==='settings'&&<SettingsTab zip={zip} stateCode={stateCode} restaurants={restaurants} groups={groups}
         onUpdateR={updateR} onAddR={addR} onDeleteR={deleteR}
         onAddGroup={addGroup} onUpdateGroup={updateGroup} onDeleteGroup={deleteGroup}
-        onSync={doSync} syncStatus={syncStatus} />}
+        onSync={doSync} onRestore={doRestore} syncStatus={syncStatus} />}
 
       <div style={{position:'fixed',bottom:0,left:0,right:0,background:C.bar,borderTop:`1px solid ${C.border}`,display:'flex',zIndex:200}}>
         {[['suggest','💡','Suggest'],['log','📝','Log'],['settings','⚙️','Settings']].map(([k,ic,lb])=>(
