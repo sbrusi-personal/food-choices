@@ -156,7 +156,10 @@ function api(params) {
 function loadLocal() { try { return JSON.parse(localStorage.getItem(STORAGE_KEY))||{}; } catch(e) { return {}; } }
 function saveLocal(d) { try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); } catch(e) {} }
 function todayStr() { const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`; }
-function daysBetween(d1,d2) { return Math.round((new Date(d2+'T12:00:00')-new Date(d1+'T12:00:00'))/86400000); }
+// Normalise dates coming back from Sheets — they may arrive as full ISO strings
+// e.g. "2024-01-15T05:00:00.000Z" instead of "2024-01-15"
+function normalizeDate(d) { if(!d) return d; return String(d).slice(0,10); }
+function daysBetween(d1,d2) { return Math.round((new Date(normalizeDate(d2)+'T12:00:00')-new Date(normalizeDate(d1)+'T12:00:00'))/86400000); }
 function getLastVisit(rid, visits) {
   const rv = visits.filter(v=>String(v.restaurant_id)===String(rid)).sort((a,b)=>b.date>a.date?1:-1);
   return rv.length>0?rv[0]:null;
@@ -357,7 +360,9 @@ function OnboardingScreen({ onComplete }) {
         }));
         onComplete({
           zip: cfg.zip||'00000', state: cfg.state||'??',
-          restaurants: res.restaurants||[], visits: res.visits||[], groups
+          restaurants: res.restaurants||[],
+          visits: (res.visits||[]).map(v=>({...v, date:normalizeDate(v.date)})),
+          groups
         });
       } else {
         setRestoreStatus('⚠ Could not reach Sheets — check the URL and redeploy as "Anyone"');
@@ -1154,7 +1159,7 @@ function App() {
       const res = await api({action:'get_all'});
       if (res?.ok) {
         if (res.restaurants?.length) setRestaurants(res.restaurants);
-        if (res.visits?.length) setVisits(res.visits);
+        if (res.visits?.length) setVisits(res.visits.map(v=>({...v, date:normalizeDate(v.date)})));
         if (res.groups?.length) {
           setGroups(res.groups.map(g=>({
             ...g,
