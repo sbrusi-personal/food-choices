@@ -1092,15 +1092,11 @@ function App() {
   const [loaded, setLoaded] = React.useState(false);
   const [syncStatus, setSyncStatus] = React.useState('');
   const [logPre, setLogPre] = React.useState(null);
-  const [syncDot, setSyncDot] = React.useState(''); // ''|'up'|'down'|'ok'|'err'
+  const [syncDot, setSyncDot] = React.useState(''); // ''|'up'|'ok'|'err'
 
-  // Always-current snapshot of state for async functions to read safely
-  const latestRef = React.useRef({});
-  React.useEffect(()=>{ latestRef.current={restaurants,visits,groups,zip,stateCode}; });
-
-  // Prevent auto-push while a pull is in progress (avoids circular updates)
   const pullingRef = React.useRef(false);
-  const pushTimerRef = React.useRef(null);
+  const lastPullRef = React.useRef(0); // timestamp of last pull
+  const syncDotTimerRef = React.useRef(null);
 
   // ── Load from localStorage on mount ──
   React.useEffect(()=>{
@@ -1119,7 +1115,7 @@ function App() {
     saveLocal({ zip, stateCode, restaurants, visits, groups, placesKey: loadLocal().placesKey||'' });
   },[zip,stateCode,restaurants,visits,groups,loaded]);
 
-  // ── Shared helper: parse groups coming from Sheets (restaurant_ids as string) ──
+  // ── Parse groups coming back from Sheets ──
   function parseGroups(gs) {
     return (gs||[]).map(g=>({
       ...g,
@@ -1129,83 +1125,102 @@ function App() {
     }));
   }
 
-  // ── Debounced auto-push: called after any user action that changes data ──
-  function triggerPush() {
-    if(!getBackendUrl()) return;
-    if(pushTimerRef.current) clearTimeout(pushTimerRef.current);
-    pushTimerRef.current = setTimeout(async()=>{
-      if(pullingRef.current) return; // a pull just happened — skip to avoid loop
-      const {restaurants:rs,visits:vs,groups:gs,zip:z,stateCode:st} = latestRef.current;
-      setSyncDot('up');
-      try {
-        for(const r of rs) await api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
-        for(const v of vs) await api({action:'save_visit',...v});
-        for(const g of gs) await api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids});
-        await api({action:'save_setting',key:'zip',value:z});
-        await api({action:'save_setting',key:'state',value:st});
-        setSyncDot('ok'); setTimeout(()=>setSyncDot(''),4000);
-      } catch(e){ setSyncDot('err'); }
-    }, 3000); // 3-second debounce — batches rapid changes
+  // ── Pull from Sheets — throttled so rapid re-focuses don't spam ──
+  // force=true bypasses the throttle (used on first open)
+  async function doPull(force) {
+    if(!getBackendUrl()||pullingRef.current) return;
+    const now=Date.now();
+    if(!force && now-lastPullRef.current<60000) return; // at most once per minute
+    pullingRef.current=true; lastPullRef.current=now;
+    try {
+      const res=await api({action:'get_all'});
+      if(res?.ok){
+        if(res.restaurants?.length) setRestaurants(res.restaurants);
+        if(res.visits?.length) setVisits(res.visits.map(v=>({...v,date:normalizeDate(v.date)})));
+        if(res.groups?.length) setGroups(parseGroups(res.groups));
+        const cfg={};
+        (res.settings||[]).forEach(s=>{cfg[s.key]=s.value;});
+        if(cfg.zip) setZip(cfg.zip);
+        if(cfg.state) setStateCode(cfg.state);
+      }
+    } catch(e){}
+    setTimeout(()=>{ pullingRef.current=false; },500);
   }
 
-  // ── Auto-pull on app open + every 5 minutes ──
+  // ── Pull on app open + whenever user switches back to the tab/app ──
+  // No background timer — pull only on focus, push only on action
   React.useEffect(()=>{
     if(screen!=='app') return;
-    async function pull() {
-      if(!getBackendUrl()||pullingRef.current) return;
-      pullingRef.current=true;
-      setSyncDot('down');
-      try {
-        const res=await api({action:'get_all'});
-        if(res?.ok){
-          if(res.restaurants?.length) setRestaurants(res.restaurants);
-          if(res.visits?.length) setVisits(res.visits.map(v=>({...v,date:normalizeDate(v.date)})));
-          if(res.groups?.length) setGroups(parseGroups(res.groups));
-          const cfg={};
-          (res.settings||[]).forEach(s=>{cfg[s.key]=s.value;});
-          if(cfg.zip) setZip(cfg.zip);
-          if(cfg.state) setStateCode(cfg.state);
-          setSyncDot('ok'); setTimeout(()=>setSyncDot(''),4000);
-        } else setSyncDot('');
-      } catch(e){ setSyncDot(''); }
-      setTimeout(()=>{ pullingRef.current=false; },1000);
-    }
-    pull();
-    const t=setInterval(pull, 5*60*1000);
-    return ()=>clearInterval(t);
+    doPull(true); // force pull on first open
+    function onVisible(){ if(document.visibilityState==='visible') doPull(false); }
+    document.addEventListener('visibilitychange', onVisible);
+    return ()=>document.removeEventListener('visibilitychange', onVisible);
   },[screen]);
+
+  // ── Show sync dot after an action-triggered push ──
+  function flashSync(apiPromise) {
+    setSyncDot('up');
+    apiPromise.then(res=>{
+      clearTimeout(syncDotTimerRef.current);
+      setSyncDot(res===null?'err':'ok');
+      syncDotTimerRef.current=setTimeout(()=>setSyncDot(''),3000);
+    }).catch(()=>setSyncDot('err'));
+  }
 
   function onComplete({ zip:z, state:st, restaurants:rs, visits:vs=[], groups:gs=[] }) {
     setZip(z); setStateCode(st); setRestaurants(rs); setVisits(vs); setGroups(gs); setScreen('app');
   }
 
-  // ── Data actions — update local state then auto-push ──
-  function saveVisit(v) { setVisits(vs=>[v,...vs.filter(x=>x.id!==v.id)]); triggerPush(); }
-  function deleteVisit(id) { setVisits(vs=>vs.filter(x=>x.id!==id)); triggerPush(); }
-  function updateR(r) { setRestaurants(rs=>rs.map(x=>x.id===r.id?{...r,frequency_days:String(r.frequency_days)}:x)); triggerPush(); }
-  function addR(r) { setRestaurants(rs=>[...rs.filter(x=>x.id!==r.id),r]); triggerPush(); }
-  function deleteR(id) { setRestaurants(rs=>rs.filter(r=>r.id!==id)); triggerPush(); }
-  function addGroup(g) { setGroups(gs=>[...gs.filter(x=>x.id!==g.id),g]); triggerPush(); }
-  function updateGroup(g) { setGroups(gs=>gs.map(x=>x.id===g.id?g:x)); triggerPush(); }
-  function deleteGroup(id) { setGroups(gs=>gs.filter(g=>g.id!==id)); triggerPush(); }
+  // ── Data actions: optimistic local update + immediate individual push ──
+  // Each action pushes only its own item — no full-state dump, no timer, no race
+  function saveVisit(v) {
+    setVisits(vs=>[v,...vs.filter(x=>x.id!==v.id)]);
+    flashSync(api({action:'save_visit',...v}));
+  }
+  function deleteVisit(id) {
+    setVisits(vs=>vs.filter(x=>x.id!==id));
+    flashSync(api({action:'delete_visit',id}));
+  }
+  function updateR(r) {
+    setRestaurants(rs=>rs.map(x=>x.id===r.id?{...r,frequency_days:String(r.frequency_days)}:x));
+    flashSync(api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)}));
+  }
+  function addR(r) {
+    setRestaurants(rs=>[...rs.filter(x=>x.id!==r.id),r]);
+    flashSync(api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)}));
+  }
+  function deleteR(id) {
+    setRestaurants(rs=>rs.filter(r=>r.id!==id));
+    flashSync(api({action:'delete_restaurant',id}));
+  }
+  function addGroup(g) {
+    setGroups(gs=>[...gs.filter(x=>x.id!==g.id),g]);
+    flashSync(api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids}));
+  }
+  function updateGroup(g) {
+    setGroups(gs=>gs.map(x=>x.id===g.id?g:x));
+    flashSync(api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids}));
+  }
+  function deleteGroup(id) {
+    setGroups(gs=>gs.filter(g=>g.id!==id));
+    flashSync(api({action:'delete_group',id}));
+  }
 
-  // ── Manual force-push (Settings fallback) ──
+  // ── Manual force-push all (Settings fallback) ──
   async function doSync() {
     if(!getBackendUrl()){ setSyncStatus('⚠ No URL — paste your Apps Script URL in Settings'); return; }
     setSyncStatus('Pushing…');
-    if(pushTimerRef.current) clearTimeout(pushTimerRef.current);
-    const {restaurants:rs,visits:vs,groups:gs,zip:z,stateCode:st}=latestRef.current;
     try {
-      for(const r of rs) await api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
-      for(const v of vs) await api({action:'save_visit',...v});
-      for(const g of gs) await api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids});
-      await api({action:'save_setting',key:'zip',value:z});
-      await api({action:'save_setting',key:'state',value:st});
+      for(const r of restaurants) await api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
+      for(const v of visits) await api({action:'save_visit',...v});
+      for(const g of groups) await api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids});
+      await api({action:'save_setting',key:'zip',value:zip});
+      await api({action:'save_setting',key:'state',value:stateCode});
       setSyncStatus('✓ Pushed '+new Date().toLocaleTimeString());
     } catch(e){ setSyncStatus('⚠ Error: '+e.message); }
   }
 
-  // ── Manual force-pull (Settings fallback) ──
+  // ── Manual force-pull all (Settings fallback) ──
   async function doRestore() {
     if(!getBackendUrl()){ setSyncStatus('⚠ No URL — paste your Apps Script URL in Settings first'); return; }
     if(!window.confirm('Replace all local data with what\'s saved in Google Sheets?')) return;
@@ -1238,8 +1253,7 @@ function App() {
         <div style={{fontSize:16,fontWeight:700}}>🍽 Eat Tracker</div>
         <div style={{display:'flex',alignItems:'center',gap:8}}>
           {syncDot==='up'&&<span style={{fontSize:10,color:'#7dd3fc',fontWeight:700}} title="Saving…">↑</span>}
-          {syncDot==='down'&&<span style={{fontSize:10,color:'#7dd3fc',fontWeight:700}} title="Syncing…">↓</span>}
-          {syncDot==='ok'&&<span style={{fontSize:10,color:C.green,fontWeight:700}} title="Synced">✓</span>}
+          {syncDot==='ok'&&<span style={{fontSize:10,color:C.green,fontWeight:700}} title="Saved">✓</span>}
           {syncDot==='err'&&<span style={{fontSize:10,color:C.orange,fontWeight:700}} title="Sync error — check Settings">⚠</span>}
           <div style={{color:C.muted,fontSize:11}}>📍 {zip} · {stateCode}</div>
         </div>
