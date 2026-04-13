@@ -1092,7 +1092,17 @@ function App() {
   const [loaded, setLoaded] = React.useState(false);
   const [syncStatus, setSyncStatus] = React.useState('');
   const [logPre, setLogPre] = React.useState(null);
+  const [syncDot, setSyncDot] = React.useState(''); // ''|'up'|'down'|'ok'|'err'
 
+  // Always-current snapshot of state for async functions to read safely
+  const latestRef = React.useRef({});
+  React.useEffect(()=>{ latestRef.current={restaurants,visits,groups,zip,stateCode}; });
+
+  // Prevent auto-push while a pull is in progress (avoids circular updates)
+  const pullingRef = React.useRef(false);
+  const pushTimerRef = React.useRef(null);
+
+  // ── Load from localStorage on mount ──
   React.useEffect(()=>{
     const loc = loadLocal();
     if(loc.zip&&loc.stateCode){
@@ -1103,85 +1113,121 @@ function App() {
     setLoaded(true);
   },[]);
 
+  // ── Persist to localStorage whenever data changes ──
   React.useEffect(()=>{
     if(!loaded||screen==='loading') return;
     saveLocal({ zip, stateCode, restaurants, visits, groups, placesKey: loadLocal().placesKey||'' });
   },[zip,stateCode,restaurants,visits,groups,loaded]);
 
+  // ── Shared helper: parse groups coming from Sheets (restaurant_ids as string) ──
+  function parseGroups(gs) {
+    return (gs||[]).map(g=>({
+      ...g,
+      restaurant_ids: typeof g.restaurant_ids==='string'
+        ? g.restaurant_ids.split(',').filter(Boolean)
+        : (g.restaurant_ids||[])
+    }));
+  }
+
+  // ── Debounced auto-push: called after any user action that changes data ──
+  function triggerPush() {
+    if(!getBackendUrl()) return;
+    if(pushTimerRef.current) clearTimeout(pushTimerRef.current);
+    pushTimerRef.current = setTimeout(async()=>{
+      if(pullingRef.current) return; // a pull just happened — skip to avoid loop
+      const {restaurants:rs,visits:vs,groups:gs,zip:z,stateCode:st} = latestRef.current;
+      setSyncDot('up');
+      try {
+        for(const r of rs) await api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
+        for(const v of vs) await api({action:'save_visit',...v});
+        for(const g of gs) await api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids});
+        await api({action:'save_setting',key:'zip',value:z});
+        await api({action:'save_setting',key:'state',value:st});
+        setSyncDot('ok'); setTimeout(()=>setSyncDot(''),4000);
+      } catch(e){ setSyncDot('err'); }
+    }, 3000); // 3-second debounce — batches rapid changes
+  }
+
+  // ── Auto-pull on app open + every 5 minutes ──
+  React.useEffect(()=>{
+    if(screen!=='app') return;
+    async function pull() {
+      if(!getBackendUrl()||pullingRef.current) return;
+      pullingRef.current=true;
+      setSyncDot('down');
+      try {
+        const res=await api({action:'get_all'});
+        if(res?.ok){
+          if(res.restaurants?.length) setRestaurants(res.restaurants);
+          if(res.visits?.length) setVisits(res.visits.map(v=>({...v,date:normalizeDate(v.date)})));
+          if(res.groups?.length) setGroups(parseGroups(res.groups));
+          const cfg={};
+          (res.settings||[]).forEach(s=>{cfg[s.key]=s.value;});
+          if(cfg.zip) setZip(cfg.zip);
+          if(cfg.state) setStateCode(cfg.state);
+          setSyncDot('ok'); setTimeout(()=>setSyncDot(''),4000);
+        } else setSyncDot('');
+      } catch(e){ setSyncDot(''); }
+      setTimeout(()=>{ pullingRef.current=false; },1000);
+    }
+    pull();
+    const t=setInterval(pull, 5*60*1000);
+    return ()=>clearInterval(t);
+  },[screen]);
+
   function onComplete({ zip:z, state:st, restaurants:rs, visits:vs=[], groups:gs=[] }) {
     setZip(z); setStateCode(st); setRestaurants(rs); setVisits(vs); setGroups(gs); setScreen('app');
   }
 
-  function saveVisit(v) { setVisits(vs=>[v,...vs.filter(x=>x.id!==v.id)]); api({action:'save_visit',...v}); }
-  function deleteVisit(id) { setVisits(vs=>vs.filter(x=>x.id!==id)); api({action:'delete_visit',id}); }
+  // ── Data actions — update local state then auto-push ──
+  function saveVisit(v) { setVisits(vs=>[v,...vs.filter(x=>x.id!==v.id)]); triggerPush(); }
+  function deleteVisit(id) { setVisits(vs=>vs.filter(x=>x.id!==id)); triggerPush(); }
+  function updateR(r) { setRestaurants(rs=>rs.map(x=>x.id===r.id?{...r,frequency_days:String(r.frequency_days)}:x)); triggerPush(); }
+  function addR(r) { setRestaurants(rs=>[...rs.filter(x=>x.id!==r.id),r]); triggerPush(); }
+  function deleteR(id) { setRestaurants(rs=>rs.filter(r=>r.id!==id)); triggerPush(); }
+  function addGroup(g) { setGroups(gs=>[...gs.filter(x=>x.id!==g.id),g]); triggerPush(); }
+  function updateGroup(g) { setGroups(gs=>gs.map(x=>x.id===g.id?g:x)); triggerPush(); }
+  function deleteGroup(id) { setGroups(gs=>gs.filter(g=>g.id!==id)); triggerPush(); }
 
-  function updateR(r) {
-    setRestaurants(rs=>rs.map(x=>x.id===r.id?{...r,frequency_days:String(r.frequency_days)}:x));
-    api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
-  }
-  function addR(r) {
-    setRestaurants(rs=>[...rs.filter(x=>x.id!==r.id),r]);
-    api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
-  }
-  function deleteR(id) { setRestaurants(rs=>rs.filter(r=>r.id!==id)); api({action:'delete_restaurant',id}); }
-
-  function addGroup(g) {
-    setGroups(gs=>[...gs.filter(x=>x.id!==g.id),{...g,restaurant_ids:g.restaurant_ids}]);
-    api({action:'save_group',...g,restaurant_ids:g.restaurant_ids.join(',')});
-  }
-  function updateGroup(g) {
-    setGroups(gs=>gs.map(x=>x.id===g.id?g:x));
-    api({action:'save_group',...g,restaurant_ids:g.restaurant_ids.join(',')});
-  }
-  function deleteGroup(id) { setGroups(gs=>gs.filter(g=>g.id!==id)); api({action:'delete_group',id}); }
-
+  // ── Manual force-push (Settings fallback) ──
   async function doSync() {
-    if (!getBackendUrl()) { setSyncStatus('⚠ No URL — paste your Apps Script URL in Settings'); return; }
-    setSyncStatus('Syncing...');
+    if(!getBackendUrl()){ setSyncStatus('⚠ No URL — paste your Apps Script URL in Settings'); return; }
+    setSyncStatus('Pushing…');
+    if(pushTimerRef.current) clearTimeout(pushTimerRef.current);
+    const {restaurants:rs,visits:vs,groups:gs,zip:z,stateCode:st}=latestRef.current;
     try {
-      const res = await api({action:'get_all'});
-      if(res?.ok) {
-        for(const r of restaurants) await api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
-        for(const v of visits) await api({action:'save_visit',...v});
-        for(const g of groups) await api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids});
-        await api({action:'save_setting',key:'zip',value:zip});
-        await api({action:'save_setting',key:'state',value:stateCode});
-        setSyncStatus('✓ Synced '+new Date().toLocaleTimeString());
-      } else setSyncStatus('⚠ URL unreachable — check Apps Script is deployed as "Anyone"');
-    } catch(e) { setSyncStatus('⚠ Error: '+e.message); }
+      for(const r of rs) await api({action:'save_restaurant',...r,frequency_days:String(r.frequency_days)});
+      for(const v of vs) await api({action:'save_visit',...v});
+      for(const g of gs) await api({action:'save_group',...g,restaurant_ids:Array.isArray(g.restaurant_ids)?g.restaurant_ids.join(','):g.restaurant_ids});
+      await api({action:'save_setting',key:'zip',value:z});
+      await api({action:'save_setting',key:'state',value:st});
+      setSyncStatus('✓ Pushed '+new Date().toLocaleTimeString());
+    } catch(e){ setSyncStatus('⚠ Error: '+e.message); }
   }
 
+  // ── Manual force-pull (Settings fallback) ──
   async function doRestore() {
-    if (!getBackendUrl()) { setSyncStatus('⚠ No URL — paste your Apps Script URL in Settings first'); return; }
-    if (!window.confirm('Replace all local data with what\'s saved in Google Sheets?\n\nThis will overwrite your restaurants, visits, and groups on this device.')) return;
-    setSyncStatus('Restoring...');
+    if(!getBackendUrl()){ setSyncStatus('⚠ No URL — paste your Apps Script URL in Settings first'); return; }
+    if(!window.confirm('Replace all local data with what\'s saved in Google Sheets?')) return;
+    setSyncStatus('Pulling…');
     try {
-      const res = await api({action:'get_all'});
-      if (res?.ok) {
-        if (res.restaurants?.length) setRestaurants(res.restaurants);
-        if (res.visits?.length) setVisits(res.visits.map(v=>({...v, date:normalizeDate(v.date)})));
-        if (res.groups?.length) {
-          setGroups(res.groups.map(g=>({
-            ...g,
-            restaurant_ids: typeof g.restaurant_ids==='string'
-              ? g.restaurant_ids.split(',').filter(Boolean)
-              : (g.restaurant_ids||[])
-          })));
-        }
-        const cfg = {};
-        (res.settings||[]).forEach(s=>{ cfg[s.key]=s.value; });
-        if (cfg.zip) setZip(cfg.zip);
-        if (cfg.state) setStateCode(cfg.state);
-        setSyncStatus('✓ Restored '+new Date().toLocaleTimeString());
-      } else {
-        setSyncStatus('⚠ URL unreachable — check Apps Script is deployed as "Anyone"');
-      }
-    } catch(e) { setSyncStatus('⚠ Error: '+e.message); }
+      const res=await api({action:'get_all'});
+      if(res?.ok){
+        if(res.restaurants?.length) setRestaurants(res.restaurants);
+        if(res.visits?.length) setVisits(res.visits.map(v=>({...v,date:normalizeDate(v.date)})));
+        if(res.groups?.length) setGroups(parseGroups(res.groups));
+        const cfg={};
+        (res.settings||[]).forEach(s=>{cfg[s.key]=s.value;});
+        if(cfg.zip) setZip(cfg.zip);
+        if(cfg.state) setStateCode(cfg.state);
+        setSyncStatus('✓ Pulled '+new Date().toLocaleTimeString());
+      } else setSyncStatus('⚠ URL unreachable — check Apps Script is deployed as "Anyone"');
+    } catch(e){ setSyncStatus('⚠ Error: '+e.message); }
   }
 
   if(screen==='loading') return (
     <div style={{minHeight:'100vh',background:C.bg,display:'flex',alignItems:'center',justifyContent:'center'}}>
-      <div style={{color:C.muted}}>Loading...</div>
+      <div style={{color:C.muted}}>Loading…</div>
     </div>
   );
   if(screen==='onboarding') return <OnboardingScreen onComplete={onComplete} />;
@@ -1190,7 +1236,13 @@ function App() {
     <div style={{minHeight:'100vh',background:C.bg,color:C.text,fontFamily:'Georgia,serif'}}>
       <div style={{background:C.bar,borderBottom:`1px solid ${C.border}`,padding:'12px 16px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
         <div style={{fontSize:16,fontWeight:700}}>🍽 Eat Tracker</div>
-        <div style={{color:C.muted,fontSize:11}}>📍 {zip} · {stateCode}</div>
+        <div style={{display:'flex',alignItems:'center',gap:8}}>
+          {syncDot==='up'&&<span style={{fontSize:10,color:'#7dd3fc',fontWeight:700}} title="Saving…">↑</span>}
+          {syncDot==='down'&&<span style={{fontSize:10,color:'#7dd3fc',fontWeight:700}} title="Syncing…">↓</span>}
+          {syncDot==='ok'&&<span style={{fontSize:10,color:C.green,fontWeight:700}} title="Synced">✓</span>}
+          {syncDot==='err'&&<span style={{fontSize:10,color:C.orange,fontWeight:700}} title="Sync error — check Settings">⚠</span>}
+          <div style={{color:C.muted,fontSize:11}}>📍 {zip} · {stateCode}</div>
+        </div>
       </div>
 
       {tab==='suggest'&&<SuggestTab restaurants={restaurants} visits={visits} groups={groups} onLogVisit={r=>{setLogPre(r);setTab('log');}} />}
