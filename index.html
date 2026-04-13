@@ -27,6 +27,14 @@ const STORAGE_KEY = "eat-tracker-v3";
 
 const CAT_LABELS = { fast_food: 'Fast Food', casual: 'Casual Dining', sit_down: 'Sit-Down' };
 
+// ── Wheel: vibrant color palette (no greys) ──
+const WHEEL_COLORS = [
+  '#ef4444','#f97316','#fbbf24','#22c55e',
+  '#14b8a6','#3b82f6','#8b5cf6','#ec4899',
+  '#06b6d4','#84cc16','#fb923c','#a855f7',
+  '#e11d48','#059669','#2563eb','#d97706',
+];
+
 const ALL_TAGS = ['Burgers','Chicken','Pizza','Mexican','Asian','Sandwiches',
   'Breakfast','Wings','Steakhouse','Italian','Seafood','American','Healthy','Coffee','BBQ','Pasta','Desserts'];
 
@@ -587,6 +595,359 @@ function SuggestTab({ restaurants, visits, groups, onLogVisit }) {
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// SPIN TAB
+// ══════════════════════════════════════════════
+function SpinTab({ restaurants, visits, groups, onLogVisit }) {
+  const canvasRef   = React.useRef(null);
+  const animRef     = React.useRef(null);
+  const angleRef    = React.useRef(0);
+  const confettiRef = React.useRef(null);
+
+  const [spinning,   setSpinning]   = React.useState(false);
+  const [winner,     setWinner]     = React.useState(null);
+  const [winColor,   setWinColor]   = React.useState('#f97316');
+  const [showWinner, setShowWinner] = React.useState(false);
+  const [removedIds, setRemovedIds] = React.useState([]);
+  const [catFilter,  setCatFilter]  = React.useState('all');
+  const [tagFilter,  setTagFilter]  = React.useState('');
+
+  const active = restaurants.filter(r => r.active==='true'||r.active===true);
+  const presentTags = [...new Set(active.flatMap(r=>parseTags(r.tags)))].sort();
+
+  const allAvailable = React.useMemo(()=>
+    active
+      .filter(r=>getAllowanceInfo(r,visits,groups).allowed)
+      .filter(r=>catFilter==='all'||r.category===catFilter)
+      .filter(r=>!tagFilter||parseTags(r.tags).includes(tagFilter)),
+    [restaurants,visits,groups,catFilter,tagFilter]
+  );
+
+  const options = React.useMemo(()=>
+    allAvailable.filter(r=>!removedIds.includes(r.id)),
+    [allAvailable,removedIds]
+  );
+
+  function drawWheel(angle) {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    const W = canvas.width, H = canvas.height;
+    const cx = W/2, cy = H/2;
+    const r = Math.min(W,H)/2 - 20;
+    ctx.clearRect(0,0,W,H);
+
+    if (options.length === 0) {
+      ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+      ctx.fillStyle='#0f172a'; ctx.fill();
+      ctx.strokeStyle='#1e293b'; ctx.lineWidth=2; ctx.stroke();
+      ctx.fillStyle='#475569'; ctx.font='13px Georgia';
+      ctx.textAlign='center'; ctx.textBaseline='middle';
+      ctx.fillText('No options available',cx,cy);
+      return;
+    }
+
+    const n = options.length;
+    const slice = (Math.PI*2)/n;
+
+    options.forEach((opt,i)=>{
+      const sa = angle + i*slice;
+      const ea = sa + slice;
+      const color = WHEEL_COLORS[i%WHEEL_COLORS.length];
+
+      // Slice
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.arc(cx,cy,r,sa,ea);
+      ctx.closePath();
+      ctx.fillStyle = color;
+      ctx.fill();
+
+      // Radial highlight sheen
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      ctx.arc(cx,cy,r,sa,ea);
+      ctx.closePath();
+      const hg = ctx.createRadialGradient(cx,cy,r*0.55,cx,cy,r);
+      hg.addColorStop(0,'rgba(255,255,255,0)');
+      hg.addColorStop(1,'rgba(255,255,255,0.13)');
+      ctx.fillStyle=hg; ctx.fill();
+
+      // Divider
+      ctx.beginPath();
+      ctx.moveTo(cx,cy);
+      const midAngle = sa + slice/2;
+      ctx.lineTo(cx+Math.cos(sa)*r, cy+Math.sin(sa)*r);
+      ctx.strokeStyle='rgba(0,0,0,0.45)'; ctx.lineWidth=1.5; ctx.stroke();
+
+      // Label
+      ctx.save();
+      ctx.translate(cx,cy);
+      ctx.rotate(sa+slice/2);
+      ctx.textAlign='right';
+      ctx.textBaseline='middle';
+      const fontSize = Math.max(9, Math.min(13, Math.round(240/Math.max(n,8))));
+      ctx.font=`bold ${fontSize}px Georgia,serif`;
+      ctx.fillStyle='#fff';
+      ctx.shadowColor='rgba(0,0,0,0.85)';
+      ctx.shadowBlur=4;
+      const maxW = r-32;
+      let text = opt.name;
+      if (ctx.measureText(text).width > maxW) {
+        while (text.length>2 && ctx.measureText(text+'…').width>maxW) text=text.slice(0,-1);
+        text+='…';
+      }
+      ctx.fillText(text, r-16, 0);
+      ctx.restore();
+    });
+
+    // Outer ring
+    ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
+    ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=3; ctx.stroke();
+
+    // Center cap
+    const cg = ctx.createRadialGradient(cx-4,cy-4,1,cx,cy,22);
+    cg.addColorStop(0,'#334155'); cg.addColorStop(1,'#0f172a');
+    ctx.beginPath(); ctx.arc(cx,cy,22,0,Math.PI*2);
+    ctx.fillStyle=cg; ctx.fill();
+    ctx.strokeStyle='#f97316'; ctx.lineWidth=2.5; ctx.stroke();
+
+    // Pointer (top, pointing inward)
+    ctx.save();
+    ctx.translate(cx,18);
+    ctx.beginPath();
+    ctx.moveTo(0,24);  // tip pointing down into wheel
+    ctx.lineTo(-12,0);
+    ctx.lineTo(12,0);
+    ctx.closePath();
+    ctx.fillStyle='#fff';
+    ctx.shadowColor='rgba(249,115,22,0.9)';
+    ctx.shadowBlur=12;
+    ctx.fill();
+    ctx.strokeStyle='#f97316'; ctx.lineWidth=2; ctx.stroke();
+    ctx.restore();
+  }
+
+  React.useEffect(()=>{ drawWheel(angleRef.current); },[]);
+  React.useEffect(()=>{ if(!showWinner) drawWheel(angleRef.current); },[options.length,catFilter,tagFilter,removedIds.length]);
+
+  function spin() {
+    if (spinning||options.length<2) return;
+    setSpinning(true); setShowWinner(false); setWinner(null);
+    confettiRef.current = Array.from({length:28},(_,i)=>({
+      left: 4+Math.random()*92,
+      top:  2+Math.random()*40,
+      size: 5+Math.random()*9,
+      round: Math.random()>0.45,
+      color: WHEEL_COLORS[i%WHEEL_COLORS.length],
+      delay: Math.random()*0.65,
+      dur:   0.8+Math.random()*1.3,
+    }));
+
+    const totalDelta = (5+Math.floor(Math.random()*6))*Math.PI*2 + Math.random()*Math.PI*2;
+    const duration   = 3600+Math.random()*1600;
+    const startAngle = angleRef.current;
+    const t0 = performance.now();
+
+    function frame(now) {
+      const t = Math.min((now-t0)/duration,1);
+      const e = 1-Math.pow(1-t,5); // ease-out quint
+      angleRef.current = startAngle + totalDelta*e;
+      drawWheel(angleRef.current);
+      if (t<1) { animRef.current=requestAnimationFrame(frame); return; }
+
+      const n=options.length, slice=(Math.PI*2)/n;
+      const finalAngle=((angleRef.current%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+      const ptrAngle=(((-Math.PI/2)-finalAngle)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+      const idx=Math.floor(ptrAngle/slice)%n;
+      const w=options[idx]||options[0];
+      setWinColor(WHEEL_COLORS[idx%WHEEL_COLORS.length]);
+      setWinner(w);
+      setSpinning(false);
+      setTimeout(()=>setShowWinner(true),200);
+    }
+    animRef.current=requestAnimationFrame(frame);
+  }
+
+  function spinAgain() {
+    if (winner) setRemovedIds(ids=>[...ids,winner.id]);
+    setWinner(null); setShowWinner(false);
+  }
+
+  function reset() { setRemovedIds([]); setWinner(null); setShowWinner(false); }
+
+  return (
+    <div style={{paddingBottom:80}}>
+      <style>{`
+        @keyframes winnerZoomIn {
+          0%  { transform:scale(0.35) translateY(40px); opacity:0; }
+          72% { transform:scale(1.06) translateY(-5px); opacity:1; }
+          100%{ transform:scale(1) translateY(0); opacity:1; }
+        }
+        @keyframes confettiFall {
+          0%  { transform:translateY(0) rotate(0deg) scale(1); opacity:1; }
+          100%{ transform:translateY(140px) rotate(600deg) scale(0.2); opacity:0; }
+        }
+        @keyframes wheelGlow {
+          0%,100%{ filter:drop-shadow(0 0 5px rgba(249,115,22,0.25)); }
+          50%    { filter:drop-shadow(0 0 22px rgba(249,115,22,0.85)) drop-shadow(0 0 8px rgba(251,191,36,0.5)); }
+        }
+        @keyframes spinBtnPulse {
+          0%,100%{ transform:scale(1);     box-shadow:0 4px 22px rgba(239,68,68,0.4); }
+          50%    { transform:scale(1.035); box-shadow:0 6px 36px rgba(249,115,22,0.75); }
+        }
+        .wheel-glow-anim { animation:wheelGlow 1.8s ease-in-out infinite; }
+        .spin-btn-anim   { animation:spinBtnPulse 2.2s ease-in-out infinite; }
+      `}</style>
+
+      {/* Filters bar */}
+      <div style={{position:'sticky',top:0,zIndex:50,background:C.bar,borderBottom:`1px solid ${C.border}`,padding:'10px 12px'}}>
+        <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:5}}>
+          {[['all','🍽 All'],['fast_food','🍔 Fast Food'],['casual','🍴 Casual'],['sit_down','🍷 Sit-Down']].map(([k,l])=>(
+            <button key={k} style={pill(catFilter===k)} onClick={()=>{setCatFilter(k);setRemovedIds([]);setWinner(null);setShowWinner(false)}}>{l}</button>
+          ))}
+        </div>
+        {presentTags.length>0&&(
+          <div style={{display:'flex',gap:5,overflowX:'auto',paddingBottom:3,marginTop:6}}>
+            <button style={pill(!tagFilter,true)} onClick={()=>{setTagFilter('');setRemovedIds([]);setWinner(null);setShowWinner(false)}}>All Types</button>
+            {presentTags.map(t=>(
+              <button key={t} style={pill(tagFilter===t,true)} onClick={()=>{setTagFilter(tagFilter===t?'':t);setRemovedIds([]);setWinner(null);setShowWinner(false)}}>{t}</button>
+            ))}
+          </div>
+        )}
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:5}}>
+          <div style={{color:C.muted,fontSize:11}}>
+            {options.length} option{options.length!==1?'s':''} on wheel
+            {removedIds.length>0?` · ${removedIds.length} skipped`:''}
+          </div>
+          {removedIds.length>0&&(
+            <button onClick={reset} style={{background:'none',border:'none',color:C.cyan,fontSize:11,cursor:'pointer',textDecoration:'underline'}}>Reset wheel</button>
+          )}
+        </div>
+      </div>
+
+      {/* Canvas + spin button */}
+      <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'22px 12px 10px',gap:0}}>
+        <canvas
+          ref={canvasRef}
+          width={320} height={320}
+          className={winner&&!spinning?'wheel-glow-anim':''}
+          style={{borderRadius:'50%',display:'block',maxWidth:'100%'}}
+        />
+        <div style={{height:22}}/>
+        {options.length<2 ? (
+          <div style={{color:C.muted,fontSize:13,textAlign:'center',maxWidth:260,lineHeight:1.6}}>
+            {allAvailable.length===0
+              ? '🎉 Everything is on cooldown! Come back after your cooldowns reset.'
+              : 'Need at least 2 options — try a broader filter or reset skipped entries.'}
+          </div>
+        ) : (
+          <button
+            onClick={spin}
+            disabled={spinning}
+            className={spinning?'':'spin-btn-anim'}
+            style={{
+              padding:'14px 46px',
+              borderRadius:50,
+              border:'none',
+              cursor:spinning?'default':'pointer',
+              fontSize:17,
+              fontFamily:'Georgia,serif',
+              fontWeight:700,
+              letterSpacing:0.4,
+              background:spinning?'#1e293b':'linear-gradient(135deg,#f97316 0%,#ef4444 100%)',
+              color:spinning?C.muted:'#fff',
+              transition:'background 0.3s',
+            }}
+          >{spinning?'🎡  Spinning…':'🎡  Spin the Wheel!'}</button>
+        )}
+      </div>
+
+      {/* Winner overlay */}
+      {showWinner&&winner&&(
+        <div
+          style={{position:'fixed',inset:0,zIndex:500,background:'rgba(5,8,15,0.9)',
+            display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}
+          onClick={e=>{if(e.target===e.currentTarget)setShowWinner(false)}}
+        >
+          {/* Confetti */}
+          {(confettiRef.current||[]).map((c,i)=>(
+            <div key={i} style={{
+              position:'absolute',left:`${c.left}%`,top:`${c.top}%`,
+              width:c.size,height:c.size,
+              borderRadius:c.round?'50%':'3px',
+              background:c.color,
+              animation:`confettiFall ${c.dur}s ease-in ${c.delay}s forwards`,
+              pointerEvents:'none',
+            }}/>
+          ))}
+
+          {/* Card */}
+          <div style={{
+            background:'linear-gradient(155deg,#0f172a 0%,#1e293b 100%)',
+            border:`2px solid ${winColor}`,
+            borderRadius:22,
+            padding:'32px 26px 26px',
+            textAlign:'center',
+            maxWidth:310,
+            width:'100%',
+            animation:'winnerZoomIn 0.48s cubic-bezier(0.34,1.56,0.64,1) both',
+            boxShadow:`0 0 0 5px ${winColor}20, 0 0 55px ${winColor}40, 0 28px 70px rgba(0,0,0,0.75)`,
+            position:'relative',zIndex:1,
+          }}>
+            {/* Top accent bar */}
+            <div style={{position:'absolute',top:0,left:0,right:0,height:6,borderRadius:'20px 20px 0 0',
+              background:`linear-gradient(90deg,${winColor},${winColor}88)`}}/>
+
+            <div style={{fontSize:54,marginBottom:8,lineHeight:1}}>
+              {winner.category==='fast_food'?'🍔':winner.category==='casual'?'🍴':'🍷'}
+            </div>
+            <div style={{color:C.muted,fontSize:11,letterSpacing:2,textTransform:'uppercase',marginBottom:10}}>
+              The wheel has spoken!
+            </div>
+            <div style={{fontSize:23,fontWeight:700,color:'#fff',marginBottom:8,lineHeight:1.2}}>
+              {winner.name}
+            </div>
+            <div style={{
+              display:'inline-block',
+              background:`${winColor}20`,
+              border:`1px solid ${winColor}55`,
+              borderRadius:10,
+              padding:'3px 12px',
+              fontSize:11,color:winColor,marginBottom:22,
+            }}>
+              {CAT_LABELS[winner.category]}
+              {parseTags(winner.tags).length>0?' · '+parseTags(winner.tags).join(', '):''}
+            </div>
+
+            <div style={{display:'flex',flexDirection:'column',gap:10}}>
+              <button onClick={()=>{setShowWinner(false);onLogVisit(winner);}}
+                style={{padding:'12px 20px',borderRadius:12,border:'none',cursor:'pointer',
+                  fontSize:15,fontFamily:'Georgia,serif',fontWeight:700,
+                  background:'#166534',color:'#4ade80',
+                  boxShadow:'0 2px 14px rgba(34,197,94,0.35)'}}>
+                ✓ Let's eat! Log Visit
+              </button>
+              <button onClick={spinAgain}
+                disabled={(allAvailable.length-removedIds.length-1)<1}
+                style={{padding:'10px 20px',borderRadius:12,border:'none',cursor:'pointer',
+                  fontSize:14,fontFamily:'Georgia,serif',fontWeight:700,
+                  background:'#1e3a5f',color:'#7dd3fc',
+                  opacity:(allAvailable.length-removedIds.length-1)<1?0.4:1}}>
+                🎡 Nope — Spin Again
+              </button>
+              <button onClick={()=>setShowWinner(false)}
+                style={{background:'none',border:'none',color:C.muted,fontSize:12,cursor:'pointer',marginTop:2}}>
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1260,6 +1621,7 @@ function App() {
       </div>
 
       {tab==='suggest'&&<SuggestTab restaurants={restaurants} visits={visits} groups={groups} onLogVisit={r=>{setLogPre(r);setTab('log');}} />}
+      {tab==='wheel'&&<SpinTab restaurants={restaurants} visits={visits} groups={groups} onLogVisit={r=>{setLogPre(r);setTab('log');}} />}
       {tab==='log'&&<LogTab restaurants={restaurants} visits={visits} onSaveVisit={saveVisit}
         onDeleteVisit={deleteVisit} preSelected={logPre} onClearPre={()=>setLogPre(null)} />}
       {tab==='settings'&&<SettingsTab zip={zip} stateCode={stateCode} restaurants={restaurants} groups={groups}
@@ -1268,7 +1630,7 @@ function App() {
         onSync={doSync} onRestore={doRestore} syncStatus={syncStatus} />}
 
       <div style={{position:'fixed',bottom:0,left:0,right:0,background:C.bar,borderTop:`1px solid ${C.border}`,display:'flex',zIndex:200}}>
-        {[['suggest','💡','Suggest'],['log','📝','Log'],['settings','⚙️','Settings']].map(([k,ic,lb])=>(
+        {[['suggest','💡','Suggest'],['wheel','🎡','Wheel'],['log','📝','Log'],['settings','⚙️','Settings']].map(([k,ic,lb])=>(
           <button key={k} onClick={()=>setTab(k)} style={{
             flex:1,padding:'10px 4px 13px',background:'none',border:'none',
             borderTop:`2px solid ${tab===k?C.blue:'transparent'}`,
