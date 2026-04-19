@@ -38,6 +38,82 @@ const WHEEL_COLORS = [
 const ALL_TAGS = ['Burgers','Chicken','Pizza','Mexican','Asian','Sandwiches',
   'Breakfast','Wings','Steakhouse','Italian','Seafood','American','Healthy','Coffee','BBQ','Pasta','Desserts'];
 
+// ── Restaurant logo domains (used with Clearbit logo API) ──
+const RESTAURANT_LOGOS = {
+  mcdonalds:      'mcdonalds.com',
+  burger_king:    'bk.com',
+  wendys:         'wendys.com',
+  taco_bell:      'tacobell.com',
+  chick_fil_a:    'chick-fil-a.com',
+  subway:         'subway.com',
+  dominos:        'dominos.com',
+  pizza_hut:      'pizzahut.com',
+  kfc:            'kfc.com',
+  popeyes:        'popeyes.com',
+  chipotle:       'chipotle.com',
+  panda_express:  'pandaexpress.com',
+  five_guys:      'fiveguys.com',
+  shake_shack:    'shakeshack.com',
+  sonic:          'sonicdrivein.com',
+  arbys:          'arbys.com',
+  dairy_queen:    'dairyqueen.com',
+  wingstop:       'wingstop.com',
+  raising_canes:  'raisingcanes.com',
+  little_caesars: 'littlecaesars.com',
+  papa_johns:     'papajohns.com',
+  jersey_mikes:   'jerseymikes.com',
+  firehouse_subs: 'firehousesubs.com',
+  jimmy_johns:    'jimmyjohns.com',
+  panera:         'panerabread.com',
+  dunkin:         'dunkindonuts.com',
+  starbucks:      'starbucks.com',
+  checkers:       'checkers.com',
+  in_n_out:       'in-n-out.com',
+  jack_box:       'jackinthebox.com',
+  whataburger:    'whataburger.com',
+  culvers:        'culvers.com',
+  white_castle:   'whitecastle.com',
+  cook_out:       'cookout.com',
+  zaxbys:         'zaxbys.com',
+  bojangles:      'bojangles.com',
+  waffle_house:   'wafflehouse.com',
+  el_pollo_loco:  'elpolloloco.com',
+  del_taco:       'deltaco.com',
+  steak_n_shake:  'steaknshake.com',
+  wawa:           'wawa.com',
+  chilis:         'chilis.com',
+  applebees:      'applebees.com',
+  tgi_fridays:    'tgifridays.com',
+  bww:            'buffalowildwings.com',
+  red_robin:      'redrobin.com',
+  texas_roadhouse:'texasroadhouse.com',
+  outback:        'outback.com',
+  cracker_barrel: 'crackerbarrel.com',
+  qdoba:          'qdoba.com',
+  moes:           'moes.com',
+  dennys:         'dennys.com',
+  ihop:           'ihop.com',
+  first_watch:    'firstwatch.com',
+  noodles:        'noodles.com',
+  jasons_deli:    'jasonsdeli.com',
+  golden_corral:  'goldencorral.com',
+  hooters:        'hooters.com',
+  bob_evans:      'bobevans.com',
+  sizzler:        'sizzler.com',
+  olive_garden:   'olivegarden.com',
+  cheesecake:     'thecheesecakefactory.com',
+  longhorn:       'longhornsteakhouse.com',
+  red_lobster:    'redlobster.com',
+  pf_changs:      'pfchangs.com',
+  bonefish:       'bonefishgrill.com',
+  carrabbas:      'carrabbas.com',
+  maggianos:      'maggianos.com',
+  benihana:       'benihana.com',
+  logans:         'logansroadhouse.com',
+  ruby_tuesday:   'rubytuesday.com',
+  perkins:        'perkinsrestaurants.com',
+};
+
 const FOOD_TAGS = {
   mcdonalds:'Burgers,Breakfast', burger_king:'Burgers', wendys:'Burgers',
   taco_bell:'Mexican', chick_fil_a:'Chicken', subway:'Sandwiches',
@@ -389,6 +465,40 @@ function StarRating({ rating, onChange, size=16 }) {
 }
 
 // ══════════════════════════════════════════════
+// RESTAURANT LOGO
+// ══════════════════════════════════════════════
+function RestaurantLogo({ restaurant, size=30 }) {
+  const [errored, setErrored] = React.useState(false);
+  const domain = restaurant && RESTAURANT_LOGOS[restaurant.id];
+  const cat = restaurant?.category;
+  const emoji = cat==='fast_food' ? '🍔' : cat==='casual' ? '🍴' : '🍷';
+
+  if (!domain || errored) {
+    return (
+      <div style={{width:size,height:size,display:'flex',alignItems:'center',
+        justifyContent:'center',fontSize:size*0.65,flexShrink:0,lineHeight:1}}>
+        {emoji}
+      </div>
+    );
+  }
+  return (
+    <div style={{width:size,height:size,background:'#fff',borderRadius:6,overflow:'hidden',
+      flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
+      <img
+        src={`https://logo.clearbit.com/${domain}`}
+        alt={restaurant.name}
+        style={{width:'100%',height:'100%',objectFit:'contain'}}
+        onError={()=>setErrored(true)}
+      />
+    </div>
+  );
+}
+
+function mapsUrl(name, zip) {
+  return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name+(zip?' '+zip:''))}`;
+}
+
+// ══════════════════════════════════════════════
 // ONBOARDING
 // ══════════════════════════════════════════════
 function OnboardingScreen({ onComplete }) {
@@ -566,7 +676,7 @@ function OnboardingScreen({ onComplete }) {
 // ══════════════════════════════════════════════
 // SUGGEST TAB
 // ══════════════════════════════════════════════
-function SuggestTab({ restaurants, visits, groups, onLogVisit }) {
+function SuggestTab({ restaurants, visits, groups, onLogVisit, zip }) {
   const [catFilter, setCatFilter] = React.useState('all');
   const [tagFilter, setTagFilter] = React.useState('');
   const today = todayStr();
@@ -641,13 +751,14 @@ function SuggestTab({ restaurants, visits, groups, onLogVisit }) {
             <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:10}}>
               <div style={{flex:1}}>
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
-                  <span style={{fontSize:15}}>{r.category==='fast_food'?'🍔':r.category==='casual'?'🍴':'🍷'}</span>
+                  <RestaurantLogo restaurant={r} size={30}/>
                   <span style={{color:r.allowed?C.text:'#64748b',fontSize:15,fontWeight:700}}>{r.name}</span>
                   {r.rating>0&&<StarRating rating={r.rating} size={13}/>}
                 </div>
-                <div style={{color:C.muted,fontSize:11,marginTop:3}}>
-                  {CAT_LABELS[r.category]} · every {r.frequency_days}d
-                  {parseTags(r.tags).length>0&&<span style={{color:'#334155'}}> · {parseTags(r.tags).join(', ')}</span>}
+                <div style={{color:C.muted,fontSize:11,marginTop:3,display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                  <span>{CAT_LABELS[r.category]} · every {r.frequency_days}d{parseTags(r.tags).length>0?` · ${parseTags(r.tags).join(', ')}`:''}</span>
+                  <a href={mapsUrl(r.name,zip)} target="_blank" rel="noreferrer"
+                    style={{color:C.cyan,textDecoration:'none',fontSize:11,whiteSpace:'nowrap'}}>📍 Maps</a>
                 </div>
                 <div style={{fontSize:11,marginTop:3}}>
                   {r.allowed?(
@@ -676,7 +787,7 @@ function SuggestTab({ restaurants, visits, groups, onLogVisit }) {
 // ══════════════════════════════════════════════
 // SPIN TAB
 // ══════════════════════════════════════════════
-function SpinTab({ restaurants, visits, groups, onLogVisit }) {
+function SpinTab({ restaurants, visits, groups, onLogVisit, zip }) {
   const canvasUnratedRef = React.useRef(null);
   const canvasRatedRef   = React.useRef(null);
   const animRef          = React.useRef(null);
@@ -962,11 +1073,13 @@ function SpinTab({ restaurants, visits, groups, onLogVisit }) {
                 textAlign:'center',animation:'winnerZoomIn 0.48s cubic-bezier(0.34,1.56,0.64,1) both',
                 boxShadow:'0 0 30px #22c55e25'}}>
                 <div style={{color:'#4ade80',fontSize:9,letterSpacing:1.5,textTransform:'uppercase',marginBottom:6}}>🆕 New Pick</div>
-                <div style={{fontSize:30,marginBottom:4}}>
-                  {winners.unrated.category==='fast_food'?'🍔':winners.unrated.category==='casual'?'🍴':'🍷'}
+                <div style={{display:'flex',justifyContent:'center',marginBottom:6}}>
+                  <RestaurantLogo restaurant={winners.unrated} size={48}/>
                 </div>
                 <div style={{fontSize:15,fontWeight:700,color:'#fff',marginBottom:3,lineHeight:1.2}}>{winners.unrated.name}</div>
-                <div style={{fontSize:10,color:C.muted,marginBottom:12}}>{CAT_LABELS[winners.unrated.category]}</div>
+                <div style={{fontSize:10,color:C.muted,marginBottom:4}}>{CAT_LABELS[winners.unrated.category]}</div>
+                <a href={mapsUrl(winners.unrated.name,zip)} target="_blank" rel="noreferrer"
+                  style={{display:'block',color:C.cyan,fontSize:11,textDecoration:'none',marginBottom:10}}>📍 Find on Maps</a>
                 <button onClick={()=>{setShowWinners(false);onLogVisit(winners.unrated);}}
                   style={{padding:'8px 12px',borderRadius:10,border:'none',cursor:'pointer',fontSize:12,
                     fontFamily:'Georgia,serif',fontWeight:700,background:'#166534',color:'#4ade80',width:'100%'}}>
@@ -982,8 +1095,8 @@ function SpinTab({ restaurants, visits, groups, onLogVisit }) {
                 textAlign:'center',animation:'winnerZoomIn 0.48s cubic-bezier(0.34,1.56,0.64,1) 0.1s both',
                 boxShadow:'0 0 30px #fbbf2425'}}>
                 <div style={{color:'#fbbf24',fontSize:9,letterSpacing:1.5,textTransform:'uppercase',marginBottom:6}}>⭐ Rated Pick</div>
-                <div style={{fontSize:30,marginBottom:4}}>
-                  {winners.rated.category==='fast_food'?'🍔':winners.rated.category==='casual'?'🍴':'🍷'}
+                <div style={{display:'flex',justifyContent:'center',marginBottom:6}}>
+                  <RestaurantLogo restaurant={winners.rated} size={48}/>
                 </div>
                 <div style={{fontSize:15,fontWeight:700,color:'#fff',marginBottom:3,lineHeight:1.2}}>{winners.rated.name}</div>
                 <div style={{display:'flex',justifyContent:'center',gap:2,marginBottom:3}}>
@@ -991,7 +1104,9 @@ function SpinTab({ restaurants, visits, groups, onLogVisit }) {
                     <span key={n} style={{fontSize:13,color:n<=winners.rated.weight?'#fbbf24':'#334155'}}>★</span>
                   ))}
                 </div>
-                <div style={{fontSize:10,color:C.muted,marginBottom:12}}>{CAT_LABELS[winners.rated.category]}</div>
+                <div style={{fontSize:10,color:C.muted,marginBottom:4}}>{CAT_LABELS[winners.rated.category]}</div>
+                <a href={mapsUrl(winners.rated.name,zip)} target="_blank" rel="noreferrer"
+                  style={{display:'block',color:C.cyan,fontSize:11,textDecoration:'none',marginBottom:10}}>📍 Find on Maps</a>
                 <button onClick={()=>{setShowWinners(false);onLogVisit(winners.rated);}}
                   style={{padding:'8px 12px',borderRadius:10,border:'none',cursor:'pointer',fontSize:12,
                     fontFamily:'Georgia,serif',fontWeight:700,background:'#78350f',color:'#fde68a',width:'100%'}}>
@@ -1526,6 +1641,8 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
                           {p.rating&&<div style={{color:'#a16207',fontSize:11,marginTop:1}}>
                             ★ {p.rating.toFixed(1)}{p.userRatingCount?` (${p.userRatingCount.toLocaleString()})`:''} on Google
                           </div>}
+                          <a href={mapsUrl(name, zip)} target="_blank" rel="noreferrer"
+                            style={{color:C.cyan,fontSize:11,textDecoration:'none'}}>📍 View on Maps</a>
                         </div>
                         {alreadyAdded
                           ? <span style={{color:C.green,fontSize:11,flexShrink:0}}>✓ In list</span>
@@ -1782,8 +1899,8 @@ function App() {
         </div>
       </div>
 
-      {tab==='suggest'&&<SuggestTab restaurants={restaurants} visits={visits} groups={groups} onLogVisit={r=>{setLogPre(r);setTab('log');}} />}
-      {tab==='wheel'&&<SpinTab restaurants={restaurants} visits={visits} groups={groups} onLogVisit={r=>{setLogPre(r);setTab('log');}} />}
+      {tab==='suggest'&&<SuggestTab restaurants={restaurants} visits={visits} groups={groups} zip={zip} onLogVisit={r=>{setLogPre(r);setTab('log');}} />}
+      {tab==='wheel'&&<SpinTab restaurants={restaurants} visits={visits} groups={groups} zip={zip} onLogVisit={r=>{setLogPre(r);setTab('log');}} />}
       {tab==='log'&&<LogTab restaurants={restaurants} visits={visits} onSaveVisit={saveVisit}
         onDeleteVisit={deleteVisit} preSelected={logPre} onClearPre={()=>setLogPre(null)} />}
       {tab==='settings'&&<SettingsTab zip={zip} stateCode={stateCode} restaurants={restaurants} groups={groups}
