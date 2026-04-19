@@ -274,6 +274,43 @@ function searchPlaces(query, location) {
   });
 }
 
+// ── Places API (New) — direct REST, no SDK needed ──
+// Requires "Places API (New)" enabled in Google Cloud Console on the key.
+async function fetchPlacesSearch(query, zip, key) {
+  const r = await fetch('https://places.googleapis.com/v1/places:searchText', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': key,
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.types,places.rating,places.userRatingCount,places.priceLevel',
+    },
+    body: JSON.stringify({
+      textQuery: `${query} near ${zip}`,
+      maxResultCount: 10,
+    }),
+  });
+  if (!r.ok) {
+    const errBody = await r.json().catch(()=>({}));
+    const msg = errBody?.error?.message || `HTTP ${r.status}`;
+    throw new Error(msg);
+  }
+  const d = await r.json();
+  return d.places || [];
+}
+
+// Infer a rough category from Places API type list
+function inferPlaceCat(types) {
+  const t = types || [];
+  const FAST = ['fast_food_restaurant','sandwich_shop','pizza_restaurant','burger_restaurant',
+    'chicken_restaurant','breakfast_restaurant','bakery','coffee_shop','diner','meal_takeaway',
+    'meal_delivery','chinese_restaurant','mexican_restaurant','thai_restaurant','vietnamese_restaurant'];
+  const SITDOWN = ['steak_house','fine_dining_restaurant','japanese_restaurant','sushi_restaurant',
+    'french_restaurant','seafood_restaurant','italian_restaurant','spanish_restaurant'];
+  if (t.some(x=>FAST.includes(x))) return 'fast_food';
+  if (t.some(x=>SITDOWN.includes(x))) return 'sit_down';
+  return 'casual';
+}
+
 // ── Design tokens ──
 const C = {
   bg:'#05080f', card:'#0f172a', bar:'#0a0f1a',
@@ -1176,6 +1213,10 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
   const [placesResults, setPlacesResults] = React.useState([]);
   const [placesLoading, setPlacesLoading] = React.useState(false);
   const [placesErr, setPlacesErr] = React.useState('');
+  // Place → add picker
+  const [addingPlace, setAddingPlace] = React.useState(null); // place object being configured
+  const [addPlaceCat, setAddPlaceCat] = React.useState('casual');
+  const [addPlaceFreq, setAddPlaceFreq] = React.useState(30);
   // Backend URL (editable from Settings)
   const [backendInput, setBackendInput] = React.useState(loadLocal().backendUrl || BACKEND || '');
   const [backendSaved, setBackendSaved] = React.useState(false);
@@ -1193,22 +1234,30 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
 
   async function doPlacesSearch() {
     if(!placesQuery.trim()||!placesKey.trim()) return;
-    setPlacesLoading(true); setPlacesErr(''); setPlacesResults([]);
+    setPlacesLoading(true); setPlacesErr(''); setPlacesResults([]); setAddingPlace(null);
     try {
-      saveLocal({...loadLocal(),placesKey});
-      await loadMapsAPI(placesKey);
-      const loc = await geocodeZip(zip);
-      const res = await searchPlaces(placesQuery, loc);
-      setPlacesResults(res.slice(0,10));
-      if(res.length===0) setPlacesErr('No results found. Try a different search.');
-    } catch(e) { setPlacesErr('Error: '+e.message+'. Check your API key.'); }
+      saveLocal({...loadLocal(), placesKey});
+      const results = await fetchPlacesSearch(placesQuery.trim(), zip, placesKey.trim());
+      setPlacesResults(results);
+      if(results.length===0) setPlacesErr('No results found. Try a different search term.');
+    } catch(e) {
+      setPlacesErr('Error: ' + e.message);
+    }
     setPlacesLoading(false);
   }
 
-  function addFromPlaces(p) {
-    const id = 'places_'+(p.place_id||Date.now());
-    onAddR({ id, name:p.name, category:'fast_food', frequency_days:'30', tags:'', active:'true', custom:'true' });
-    setPlacesResults(prev=>prev.filter(x=>x.place_id!==p.place_id));
+  function openAddPicker(p) {
+    const cat = inferPlaceCat(p.types);
+    setAddingPlace(p); setAddPlaceCat(cat); setAddPlaceFreq(30);
+  }
+
+  function confirmAddPlace() {
+    if(!addingPlace) return;
+    const id = 'places_' + (addingPlace.id || Date.now());
+    onAddR({ id, name: addingPlace.displayName?.text || addingPlace.id, category: addPlaceCat,
+      frequency_days: String(addPlaceFreq), tags:'', active:'true', custom:'true' });
+    setPlacesResults(prev => prev.filter(x => x.id !== addingPlace.id));
+    setAddingPlace(null);
   }
 
   function addCustom() {
@@ -1425,32 +1474,98 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
             {showAddFrom==='places'&&(
               <div style={card({borderColor:C.bBlue})}>
                 <div style={{color:C.mid,fontSize:13,fontWeight:700,marginBottom:4}}>🔍 Search Google Places</div>
-                <div style={{color:C.muted,fontSize:11,marginBottom:10}}>
-                  Find any restaurant near {zip}. Requires a Google Maps API key with Places enabled.
-                  <a href="https://console.cloud.google.com/apis/credentials" target="_blank" style={{color:C.cyan,marginLeft:4}}>Get one →</a>
+                <div style={{color:C.muted,fontSize:11,marginBottom:6}}>
+                  Search any restaurant, cuisine, or food type near {zip}.
                 </div>
-                <input style={{...inp,marginBottom:6,fontSize:13}} placeholder="Google Maps API key"
+                {/* API key requirements callout */}
+                <div style={{background:'#0a0f1a',border:`1px solid ${C.border}`,borderRadius:8,
+                  padding:'8px 12px',marginBottom:10,fontSize:11,color:'#64748b',lineHeight:1.6}}>
+                  <strong style={{color:C.muted}}>Required Google Cloud setup:</strong> enable{' '}
+                  <strong style={{color:'#93c5fd'}}>Places API (New)</strong> on your key.
+                  Key restrictions → HTTP referrers: add <code style={{color:'#fbbf24'}}>sbrusi-personal.github.io/*</code>
+                  {' '}<a href="https://console.cloud.google.com/apis/library/places-backend.googleapis.com"
+                    target="_blank" style={{color:C.cyan}}>Enable it →</a>
+                </div>
+                <input style={{...inp,marginBottom:6,fontSize:13}} placeholder="Google Maps / Places API key"
                   value={placesKey} onChange={e=>setPlacesKey(e.target.value)} type="password" />
                 <div style={{display:'flex',gap:6,marginBottom:8}}>
-                  <input style={{...inp,flex:1,fontSize:13}} placeholder='e.g. "Shake Shack" or "sushi"'
+                  <input style={{...inp,flex:1,fontSize:13}} placeholder='restaurant name, cuisine, or food type'
                     value={placesQuery} onChange={e=>setPlacesQuery(e.target.value)}
                     onKeyDown={e=>e.key==='Enter'&&doPlacesSearch()} />
-                  <button style={{...btn('#1d4ed8','#fff',true),whiteSpace:'nowrap',opacity:(!placesKey||!placesQuery||placesLoading)?0.5:1}}
+                  <button style={{...btn('#1d4ed8','#fff',true),whiteSpace:'nowrap',
+                    opacity:(!placesKey||!placesQuery||placesLoading)?0.5:1}}
                     onClick={doPlacesSearch} disabled={!placesKey||!placesQuery||placesLoading}>
-                    {placesLoading?'…':'Search'}
+                    {placesLoading?'Searching…':'Search'}
                   </button>
                 </div>
-                {placesErr&&<div style={{color:C.red,fontSize:12,marginBottom:8}}>{placesErr}</div>}
+                {placesErr&&(
+                  <div style={{background:'#1c0a0a',border:`1px solid #7f1d1d`,borderRadius:8,
+                    padding:'8px 12px',marginBottom:8,color:C.red,fontSize:12,lineHeight:1.5}}>
+                    ⚠ {placesErr}
+                    {placesErr.includes('PERMISSION_DENIED')||placesErr.includes('403')
+                      ? <div style={{marginTop:4,color:'#94a3b8'}}>→ Make sure <strong>Places API (New)</strong> is enabled and the key has no domain restrictions that block this site.</div>
+                      : placesErr.includes('INVALID_ARGUMENT')||placesErr.includes('400')
+                      ? <div style={{marginTop:4,color:'#94a3b8'}}>→ Check the API key is correct and try again.</div>
+                      : null}
+                  </div>
+                )}
+                {/* Results */}
                 {placesResults.map(p=>{
-                  const alreadyAdded=trackedIds.has('places_'+p.place_id)||restaurants.some(r=>r.name.toLowerCase()===p.name.toLowerCase());
+                  const name = p.displayName?.text || p.id;
+                  const alreadyAdded = trackedIds.has('places_'+p.id) ||
+                    restaurants.some(r=>r.name.toLowerCase()===name.toLowerCase());
+                  const isExpanded = addingPlace?.id === p.id;
+                  const addr = p.formattedAddress?.split(',').slice(0,2).join(',');
                   return (
-                    <div key={p.place_id} style={{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'8px 0',borderBottom:`1px solid #0f172a`}}>
-                      <div>
-                        <div style={{color:C.text,fontSize:13}}>{p.name}</div>
-                        <div style={{color:C.muted,fontSize:11}}>{p.formatted_address?.split(',').slice(0,2).join(',')}</div>
+                    <div key={p.id} style={{borderBottom:`1px solid #0f172a`,paddingBottom:8,marginBottom:8}}>
+                      {/* Result row */}
+                      <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8}}>
+                        <div style={{flex:1,minWidth:0}}>
+                          <div style={{color:C.text,fontSize:13,fontWeight:700}}>{name}</div>
+                          {addr&&<div style={{color:C.muted,fontSize:11,marginTop:1}}>{addr}</div>}
+                          {p.rating&&<div style={{color:'#a16207',fontSize:11,marginTop:1}}>
+                            ★ {p.rating.toFixed(1)}{p.userRatingCount?` (${p.userRatingCount.toLocaleString()})`:''} on Google
+                          </div>}
+                        </div>
+                        {alreadyAdded
+                          ? <span style={{color:C.green,fontSize:11,flexShrink:0}}>✓ In list</span>
+                          : <button style={{...btn(isExpanded?'#1d4ed8':C.bBlue,isExpanded?'#fff':'#93c5fd',true),flexShrink:0}}
+                              onClick={()=>isExpanded?setAddingPlace(null):openAddPicker(p)}>
+                              {isExpanded?'Cancel':'+ Add'}
+                            </button>}
                       </div>
-                      {alreadyAdded?<span style={{color:'#22c55e',fontSize:11}}>✓ Added</span>:
-                        <button style={{...btn(C.bBlue,'#93c5fd',true)}} onClick={()=>addFromPlaces(p)}>Add</button>}
+                      {/* Inline add picker — expands when "+ Add" clicked */}
+                      {isExpanded&&!alreadyAdded&&(
+                        <div style={{marginTop:10,padding:'12px',background:'#0a0f1a',
+                          border:`1px solid ${C.bBlue}`,borderRadius:10}}>
+                          <div style={{color:C.mid,fontSize:11,fontWeight:700,marginBottom:8}}>Configure before adding:</div>
+                          {/* Category */}
+                          <div style={{marginBottom:10}}>
+                            <div style={{color:C.muted,fontSize:11,marginBottom:5}}>Category</div>
+                            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                              {[['fast_food','🍔 Fast Food'],['casual','🍴 Casual'],['sit_down','🍷 Sit-Down']].map(([k,l])=>(
+                                <button key={k} style={pill(addPlaceCat===k)} onClick={()=>setAddPlaceCat(k)}>{l}</button>
+                              ))}
+                            </div>
+                          </div>
+                          {/* Frequency */}
+                          <div style={{marginBottom:12}}>
+                            <div style={{color:C.muted,fontSize:11,marginBottom:5}}>How often?</div>
+                            <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>
+                              {[[7,'Weekly'],[14,'Biweekly'],[30,'Monthly']].map(([d,l])=>(
+                                <button key={d} style={pill(addPlaceFreq===d)} onClick={()=>setAddPlaceFreq(d)}>{l}</button>
+                              ))}
+                              <button style={pill(![7,14,30].includes(addPlaceFreq))} onClick={()=>{
+                                const d=parseInt(window.prompt('Minimum days between visits:'));
+                                if(d>0)setAddPlaceFreq(d);
+                              }}>Custom{![7,14,30].includes(addPlaceFreq)?` (${addPlaceFreq}d)`:''}</button>
+                            </div>
+                          </div>
+                          <button style={{...btn('#1d4ed8','#fff'),width:'100%'}} onClick={confirmAddPlace}>
+                            ✓ Add {name} to my list
+                          </button>
+                        </div>
+                      )}
                     </div>
                   );
                 })}
