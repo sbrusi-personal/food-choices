@@ -358,7 +358,7 @@ async function fetchPlacesSearch(query, zip, key) {
     headers: {
       'Content-Type': 'application/json',
       'X-Goog-Api-Key': key,
-      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.types,places.rating,places.userRatingCount,places.priceLevel',
+      'X-Goog-FieldMask': 'places.id,places.displayName,places.formattedAddress,places.types,places.rating,places.userRatingCount,places.priceLevel,places.photos',
     },
     body: JSON.stringify({
       textQuery: `${query} near ${zip}`,
@@ -468,12 +468,26 @@ function StarRating({ rating, onChange, size=16 }) {
 // RESTAURANT LOGO
 // ══════════════════════════════════════════════
 function RestaurantLogo({ restaurant, size=30 }) {
-  const [errored, setErrored] = React.useState(false);
-  const domain = restaurant && RESTAURANT_LOGOS[restaurant.id];
-  const cat = restaurant?.category;
+  const [phase, setPhase] = React.useState(0);
+  // phase 0 = try best source, 1 = try fallback, 2 = emoji
+  const cat   = restaurant?.category;
   const emoji = cat==='fast_food' ? '🍔' : cat==='casual' ? '🍴' : '🍷';
+  const domain = restaurant && RESTAURANT_LOGOS[restaurant.id];
+  const photo  = restaurant?.photo; // Places photo reference name e.g. "places/ChIJ.../photos/..."
+  const apiKey = photo ? (loadLocal().placesKey || '') : '';
 
-  if (!domain || errored) {
+  // Determine src for each phase
+  let src = null;
+  if (phase === 0) {
+    if (photo && apiKey)
+      src = `https://places.googleapis.com/v1/${photo}/media?maxWidthPx=${size*2}&key=${apiKey}`;
+    else if (domain)
+      src = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+  } else if (phase === 1 && domain) {
+    src = `https://www.google.com/s2/favicons?domain=${domain}&sz=64`;
+  }
+
+  if (!src) {
     return (
       <div style={{width:size,height:size,display:'flex',alignItems:'center',
         justifyContent:'center',fontSize:size*0.65,flexShrink:0,lineHeight:1}}>
@@ -485,10 +499,10 @@ function RestaurantLogo({ restaurant, size=30 }) {
     <div style={{width:size,height:size,background:'#fff',borderRadius:6,overflow:'hidden',
       flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}}>
       <img
-        src={`https://www.google.com/s2/favicons?domain=${domain}&sz=64`}
-        alt={restaurant.name}
-        style={{width:'100%',height:'100%',objectFit:'contain'}}
-        onError={()=>setErrored(true)}
+        src={src}
+        alt={restaurant?.name}
+        style={{width:'100%',height:'100%',objectFit:'cover'}}
+        onError={()=>setPhase(p=>p+1)}
       />
     </div>
   );
@@ -1369,8 +1383,9 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
   function confirmAddPlace() {
     if(!addingPlace) return;
     const id = 'places_' + (addingPlace.id || Date.now());
+    const photo = addingPlace.photos?.[0]?.name || '';
     onAddR({ id, name: addingPlace.displayName?.text || addingPlace.id, category: addPlaceCat,
-      frequency_days: String(addPlaceFreq), tags:'', active:'true', custom:'true' });
+      frequency_days: String(addPlaceFreq), tags:'', active:'true', custom:'true', photo });
     setPlacesResults(prev => prev.filter(x => x.id !== addingPlace.id));
     setAddingPlace(null);
   }
