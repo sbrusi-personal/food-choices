@@ -1346,6 +1346,14 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
   const [addingPlace, setAddingPlace] = React.useState(null); // place object being configured
   const [addPlaceCat, setAddPlaceCat] = React.useState('casual');
   const [addPlaceFreq, setAddPlaceFreq] = React.useState(30);
+  // Logo fetcher (batch fix missing logos)
+  const [showLf, setShowLf] = React.useState(false);
+  const [lfQueue, setLfQueue] = React.useState([]);
+  const [lfIdx, setLfIdx] = React.useState(0);
+  const [lfResult, setLfResult] = React.useState(null);
+  const [lfLoading, setLfLoading] = React.useState(false);
+  const [lfDone, setLfDone] = React.useState(0);
+  const lfQueueRef = React.useRef([]);
   // Backend URL (editable from Settings)
   const [backendInput, setBackendInput] = React.useState(loadLocal().backendUrl || BACKEND || '');
   const [backendSaved, setBackendSaved] = React.useState(false);
@@ -1388,6 +1396,49 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
       frequency_days: String(addPlaceFreq), tags:'', active:'true', custom:'true', photo });
     setPlacesResults(prev => prev.filter(x => x.id !== addingPlace.id));
     setAddingPlace(null);
+  }
+
+  // ── Logo Fetcher ──
+  async function startLogoFetch() {
+    if(!placesKey.trim()){
+      alert('Enter your Google Maps API key first (open Search Google Places to paste it).');
+      return;
+    }
+    const missing = restaurants.filter(r=>!RESTAURANT_LOGOS[r.id]&&!r.photo);
+    if(missing.length===0){ alert('All restaurants already have logos!'); return; }
+    lfQueueRef.current = missing;
+    setLfQueue(missing); setLfIdx(0); setLfDone(0); setLfResult(null); setShowLf(true);
+    await lfFetch(missing, 0);
+  }
+
+  async function lfFetch(queue, idx) {
+    if(idx>=queue.length) return;
+    setLfLoading(true); setLfResult(null);
+    try {
+      const results = await fetchPlacesSearch(queue[idx].name, zip, placesKey.trim());
+      // Prefer results that actually have photos; fall back to first result
+      const match = results.find(p=>p.photos?.length>0) || results[0] || null;
+      setLfResult(match);
+    } catch(e) { setLfResult(null); }
+    setLfLoading(false);
+  }
+
+  function lfAccept() {
+    const photo = lfResult?.photos?.[0]?.name || '';
+    if(photo) {
+      const r = lfQueueRef.current[lfIdx];
+      onUpdateR({...r, photo});
+      setLfDone(d=>d+1);
+    }
+    lfAdvance();
+  }
+
+  function lfSkip() { lfAdvance(); }
+
+  function lfAdvance() {
+    const next = lfIdx+1;
+    setLfIdx(next); setLfResult(null);
+    if(next < lfQueueRef.current.length) lfFetch(lfQueueRef.current, next);
   }
 
   function addCustom() {
@@ -1450,9 +1501,102 @@ function SettingsTab({ zip, stateCode, restaurants, groups, onUpdateR, onAddR, o
 
       <div style={{padding:'10px 12px'}}>
 
+        {/* ── LOGO FETCHER PANEL (shown when active) ── */}
+        {showLf&&(()=>{
+          const total = lfQueue.length;
+          const current = lfQueueRef.current[lfIdx];
+          const done = lfIdx >= total;
+          return (
+            <div style={card({borderColor:C.blue,marginBottom:12})}>
+              <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:10}}>
+                <div style={{color:C.mid,fontSize:13,fontWeight:700}}>🖼 Fetch Missing Logos</div>
+                <button onClick={()=>setShowLf(false)}
+                  style={{background:'none',border:'none',color:C.muted,cursor:'pointer',fontSize:16}}>✕</button>
+              </div>
+
+              {done ? (
+                <div style={{textAlign:'center',padding:'12px 0',color:C.green,fontSize:13}}>
+                  ✓ Done! {lfDone} logo{lfDone!==1?'s':''} updated out of {total} checked.
+                </div>
+              ) : lfLoading ? (
+                <div style={{textAlign:'center',padding:'14px 0',color:C.muted,fontSize:13}}>
+                  <div style={{marginBottom:6}}>Searching Google Maps…</div>
+                  <div style={{color:'#334155',fontSize:11}}>"{current?.name}"</div>
+                </div>
+              ) : lfResult ? (
+                <>
+                  <div style={{color:C.muted,fontSize:11,marginBottom:8}}>
+                    Best match for <strong style={{color:C.text}}>"{current?.name}"</strong>:
+                  </div>
+                  <div style={{display:'flex',gap:12,alignItems:'center',
+                    background:'#0a0f1a',borderRadius:10,padding:'10px 12px',marginBottom:12}}>
+                    {/* Photo preview */}
+                    {lfResult.photos?.[0] ? (
+                      <img
+                        src={`https://places.googleapis.com/v1/${lfResult.photos[0].name}/media?maxWidthPx=100&key=${placesKey.trim()}`}
+                        style={{width:60,height:60,borderRadius:8,objectFit:'cover',flexShrink:0,background:'#1e293b'}}
+                      />
+                    ) : (
+                      <div style={{width:60,height:60,borderRadius:8,background:'#1e293b',display:'flex',
+                        alignItems:'center',justifyContent:'center',color:C.muted,fontSize:22,flexShrink:0}}>📷</div>
+                    )}
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{color:C.text,fontSize:13,fontWeight:700}}>{lfResult.displayName?.text}</div>
+                      {lfResult.formattedAddress&&(
+                        <div style={{color:C.muted,fontSize:11,marginTop:2}}>
+                          {lfResult.formattedAddress.split(',').slice(0,2).join(',')}
+                        </div>
+                      )}
+                      {lfResult.rating&&(
+                        <div style={{color:'#a16207',fontSize:11,marginTop:2}}>
+                          ★ {lfResult.rating.toFixed(1)}{lfResult.userRatingCount?` (${lfResult.userRatingCount.toLocaleString()})`:''} on Google
+                        </div>
+                      )}
+                      {!lfResult.photos?.length&&(
+                        <div style={{color:C.orange,fontSize:11,marginTop:2}}>⚠ No photo available</div>
+                      )}
+                    </div>
+                  </div>
+                  <div style={{display:'flex',gap:8,marginBottom:8}}>
+                    <button onClick={lfAccept}
+                      disabled={!lfResult.photos?.length}
+                      style={{...btn('#166534','#4ade80'),flex:1,opacity:lfResult.photos?.length?1:0.4}}>
+                      ✓ Use this logo
+                    </button>
+                    <button onClick={lfSkip}
+                      style={{...btn('#1e293b',C.mid),flex:1}}>
+                      → Skip
+                    </button>
+                  </div>
+                  <div style={{color:'#334155',fontSize:10,textAlign:'center'}}>
+                    {lfIdx+1} of {total} · {lfDone} saved so far
+                  </div>
+                </>
+              ) : (
+                <div style={{textAlign:'center',padding:'10px 0'}}>
+                  <div style={{color:C.orange,fontSize:12,marginBottom:8}}>
+                    No match found for "{current?.name}"
+                  </div>
+                  <button onClick={lfSkip} style={{...btn('#1e293b',C.cyan,true)}}>Skip →</button>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* ── RESTAURANTS SECTION ── */}
         {section==='restaurants'&&(
           <>
+            {/* Fetch logos button */}
+            {(()=>{
+              const missing = restaurants.filter(r=>!RESTAURANT_LOGOS[r.id]&&!r.photo);
+              return missing.length>0&&!showLf&&(
+                <button onClick={startLogoFetch}
+                  style={{...btn('#1e3a5f','#93c5fd'),width:'100%',marginBottom:10,textAlign:'left'}}>
+                  🖼 Fetch missing logos ({missing.length} restaurants without a logo)
+                </button>
+              );
+            })()}
             <div style={{display:'flex',gap:6,overflowX:'auto',marginBottom:10,paddingBottom:2}}>
               {[['all','All'],['fast_food','🍔'],['casual','🍴'],['sit_down','🍷']].map(([k,l])=>(
                 <button key={k} style={pill(catFilter===k)} onClick={()=>setCatFilter(k)}>{l} {k==='all'?'':''}</button>
