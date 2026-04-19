@@ -172,6 +172,12 @@ function getLastVisit(rid, visits) {
   const rv = visits.filter(v=>String(v.restaurant_id)===String(rid)).sort((a,b)=>b.date>a.date?1:-1);
   return rv.length>0?rv[0]:null;
 }
+function getRestaurantRating(rid, visits) {
+  const rv = visits
+    .filter(v=>String(v.restaurant_id)===String(rid) && v.rating && parseInt(v.rating)>0)
+    .sort((a,b)=>b.date>a.date?1:-1);
+  return rv.length>0 ? parseInt(rv[0].rating) : 0;
+}
 function zipToState(zip) {
   if (!zip||zip.length<3) return null;
   const p = parseInt(zip.substring(0,3));
@@ -319,6 +325,28 @@ function TagChips({ tags, editable, onChange }) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// ══════════════════════════════════════════════
+// STAR RATING
+// ══════════════════════════════════════════════
+function StarRating({ rating, onChange, size=16 }) {
+  const [hover, setHover] = React.useState(0);
+  const display = hover || rating;
+  return (
+    <div style={{display:'flex',gap:1,alignItems:'center'}}>
+      {[1,2,3,4,5].map(n=>(
+        <span key={n}
+          style={{fontSize:size,cursor:onChange?'pointer':'default',
+            color:n<=display?'#fbbf24':'#334155',lineHeight:1,userSelect:'none',
+            transition:'color 0.1s'}}
+          onMouseEnter={()=>onChange&&setHover(n)}
+          onMouseLeave={()=>onChange&&setHover(0)}
+          onClick={()=>onChange&&onChange(rating===n?0:n)}
+        >★</span>
+      ))}
     </div>
   );
 }
@@ -513,15 +541,23 @@ function SuggestTab({ restaurants, visits, groups, onLogVisit }) {
 
   const withStatus = active.map(r=>{
     const info = getAllowanceInfo(r, visits, groups);
-    return {...r, ...info};
+    const rating = getRestaurantRating(r.id, visits);
+    return {...r, ...info, rating};
   });
 
   const filtered = withStatus
     .filter(r=>catFilter==='all'||r.category===catFilter)
     .filter(r=>!tagFilter||parseTags(r.tags).includes(tagFilter))
     .sort((a,b)=>{
+      // Available first
       if(a.allowed&&!b.allowed) return -1;
       if(!a.allowed&&b.allowed) return 1;
+      // Within each group: rated (desc) first, then unrated
+      const aRated = a.rating>0, bRated = b.rating>0;
+      if(aRated&&!bRated) return -1;
+      if(!aRated&&bRated) return 1;
+      if(aRated&&bRated) return b.rating-a.rating;
+      // Both unrated: sort by days since (longest first) or alpha
       if(a.allowed&&b.allowed) {
         if(a.daysSince===null&&b.daysSince!==null) return -1;
         if(a.daysSince!==null&&b.daysSince===null) return 1;
@@ -570,6 +606,7 @@ function SuggestTab({ restaurants, visits, groups, onLogVisit }) {
                 <div style={{display:'flex',alignItems:'center',gap:8}}>
                   <span style={{fontSize:15}}>{r.category==='fast_food'?'🍔':r.category==='casual'?'🍴':'🍷'}</span>
                   <span style={{color:r.allowed?C.text:'#64748b',fontSize:15,fontWeight:700}}>{r.name}</span>
+                  {r.rating>0&&<StarRating rating={r.rating} size={13}/>}
                 </div>
                 <div style={{color:C.muted,fontSize:11,marginTop:3}}>
                   {CAT_LABELS[r.category]} · every {r.frequency_days}d
@@ -603,20 +640,20 @@ function SuggestTab({ restaurants, visits, groups, onLogVisit }) {
 // SPIN TAB
 // ══════════════════════════════════════════════
 function SpinTab({ restaurants, visits, groups, onLogVisit }) {
-  const canvasRef   = React.useRef(null);
-  const animRef     = React.useRef(null);
-  const angleRef    = React.useRef(0);
-  const confettiRef = React.useRef(null);
+  const canvasUnratedRef = React.useRef(null);
+  const canvasRatedRef   = React.useRef(null);
+  const animRef          = React.useRef(null);
+  const angleUnratedRef  = React.useRef(0);
+  const angleRatedRef    = React.useRef(0);
+  const confettiRef      = React.useRef(null);
 
-  const [spinning,   setSpinning]   = React.useState(false);
-  const [winner,     setWinner]     = React.useState(null);
-  const [winColor,   setWinColor]   = React.useState('#f97316');
-  const [showWinner, setShowWinner] = React.useState(false);
-  const [removedIds, setRemovedIds] = React.useState([]);
-  const [catFilter,  setCatFilter]  = React.useState('all');
-  const [tagFilter,  setTagFilter]  = React.useState('');
+  const [spinning,    setSpinning]    = React.useState(false);
+  const [winners,     setWinners]     = React.useState(null);
+  const [showWinners, setShowWinners] = React.useState(false);
+  const [catFilter,   setCatFilter]   = React.useState('all');
+  const [tagFilter,   setTagFilter]   = React.useState('');
 
-  const active = restaurants.filter(r => r.active==='true'||r.active===true);
+  const active = restaurants.filter(r=>r.active==='true'||r.active===true);
   const presentTags = [...new Set(active.flatMap(r=>parseTags(r.tags)))].sort();
 
   const allAvailable = React.useMemo(()=>
@@ -627,158 +664,154 @@ function SpinTab({ restaurants, visits, groups, onLogVisit }) {
     [restaurants,visits,groups,catFilter,tagFilter]
   );
 
-  const options = React.useMemo(()=>
-    allAvailable.filter(r=>!removedIds.includes(r.id)),
-    [allAvailable,removedIds]
+  // Split available pool into rated (weighted) and unrated (equal)
+  const unratedOptions = React.useMemo(()=>
+    allAvailable.filter(r=>getRestaurantRating(r.id,visits)===0),
+    [allAvailable,visits]
+  );
+  const ratedOptions = React.useMemo(()=>
+    allAvailable
+      .filter(r=>getRestaurantRating(r.id,visits)>0)
+      .map(r=>({...r, weight:getRestaurantRating(r.id,visits)})),
+    [allAvailable,visits]
   );
 
-  function drawWheel(angle) {
+  // ── Draw a single wheel ──
+  function drawWheelCanvas(canvasRef, options, angle, weighted) {
     const canvas = canvasRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
     const W = canvas.width, H = canvas.height;
     const cx = W/2, cy = H/2;
-    const r = Math.min(W,H)/2 - 20;
+    const r = Math.min(W,H)/2 - 12;
     ctx.clearRect(0,0,W,H);
 
-    if (options.length === 0) {
+    if (options.length===0) {
       ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
       ctx.fillStyle='#0f172a'; ctx.fill();
       ctx.strokeStyle='#1e293b'; ctx.lineWidth=2; ctx.stroke();
-      ctx.fillStyle='#475569'; ctx.font='13px Georgia';
+      ctx.fillStyle='#475569'; ctx.font='10px Georgia';
       ctx.textAlign='center'; ctx.textBaseline='middle';
-      ctx.fillText('No options available',cx,cy);
+      ctx.fillText('None available',cx,cy);
       return;
     }
 
     const n = options.length;
-    const slice = (Math.PI*2)/n;
+    // Build slice angle boundaries
+    let slices;
+    if (weighted) {
+      const total = options.reduce((s,o)=>s+o.weight,0);
+      let cum=0;
+      slices = options.map(o=>{
+        const start=(cum/total)*Math.PI*2; cum+=o.weight;
+        return {start, end:(cum/total)*Math.PI*2};
+      });
+    } else {
+      const sz=(Math.PI*2)/n;
+      slices = options.map((_,i)=>({start:i*sz, end:(i+1)*sz}));
+    }
 
     options.forEach((opt,i)=>{
-      const sa = angle + i*slice;
-      const ea = sa + slice;
-      const color = WHEEL_COLORS[i%WHEEL_COLORS.length];
-
-      // Slice
-      ctx.beginPath();
-      ctx.moveTo(cx,cy);
-      ctx.arc(cx,cy,r,sa,ea);
-      ctx.closePath();
-      ctx.fillStyle = color;
-      ctx.fill();
-
-      // Radial highlight sheen
-      ctx.beginPath();
-      ctx.moveTo(cx,cy);
-      ctx.arc(cx,cy,r,sa,ea);
-      ctx.closePath();
-      const hg = ctx.createRadialGradient(cx,cy,r*0.55,cx,cy,r);
-      hg.addColorStop(0,'rgba(255,255,255,0)');
-      hg.addColorStop(1,'rgba(255,255,255,0.13)');
+      const sa=angle+slices[i].start, ea=angle+slices[i].end;
+      const color=WHEEL_COLORS[i%WHEEL_COLORS.length];
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,r,sa,ea); ctx.closePath();
+      ctx.fillStyle=color; ctx.fill();
+      // Sheen
+      ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,r,sa,ea); ctx.closePath();
+      const hg=ctx.createRadialGradient(cx,cy,r*0.55,cx,cy,r);
+      hg.addColorStop(0,'rgba(255,255,255,0)'); hg.addColorStop(1,'rgba(255,255,255,0.13)');
       ctx.fillStyle=hg; ctx.fill();
-
       // Divider
-      ctx.beginPath();
-      ctx.moveTo(cx,cy);
-      const midAngle = sa + slice/2;
-      ctx.lineTo(cx+Math.cos(sa)*r, cy+Math.sin(sa)*r);
+      ctx.beginPath(); ctx.moveTo(cx,cy);
+      ctx.lineTo(cx+Math.cos(sa)*r,cy+Math.sin(sa)*r);
       ctx.strokeStyle='rgba(0,0,0,0.45)'; ctx.lineWidth=1.5; ctx.stroke();
-
       // Label
-      ctx.save();
-      ctx.translate(cx,cy);
-      ctx.rotate(sa+slice/2);
-      ctx.textAlign='right';
-      ctx.textBaseline='middle';
-      const fontSize = Math.max(9, Math.min(13, Math.round(240/Math.max(n,8))));
+      ctx.save(); ctx.translate(cx,cy);
+      ctx.rotate(sa+(slices[i].end-slices[i].start)/2);
+      ctx.textAlign='right'; ctx.textBaseline='middle';
+      const fontSize=Math.max(8,Math.min(11,Math.round(160/Math.max(n,8))));
       ctx.font=`bold ${fontSize}px Georgia,serif`;
-      ctx.fillStyle='#fff';
-      ctx.shadowColor='rgba(0,0,0,0.85)';
-      ctx.shadowBlur=4;
-      const maxW = r-32;
-      let text = opt.name;
-      if (ctx.measureText(text).width > maxW) {
-        while (text.length>2 && ctx.measureText(text+'…').width>maxW) text=text.slice(0,-1);
+      ctx.fillStyle='#fff'; ctx.shadowColor='rgba(0,0,0,0.85)'; ctx.shadowBlur=4;
+      const maxW=r-18; let text=opt.name;
+      if(ctx.measureText(text).width>maxW){
+        while(text.length>2&&ctx.measureText(text+'…').width>maxW) text=text.slice(0,-1);
         text+='…';
       }
-      ctx.fillText(text, r-16, 0);
-      ctx.restore();
+      ctx.fillText(text,r-10,0); ctx.restore();
     });
-
     // Outer ring
     ctx.beginPath(); ctx.arc(cx,cy,r,0,Math.PI*2);
-    ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=3; ctx.stroke();
-
+    ctx.strokeStyle='rgba(255,255,255,0.18)'; ctx.lineWidth=2.5; ctx.stroke();
     // Center cap
-    const cg = ctx.createRadialGradient(cx-4,cy-4,1,cx,cy,22);
+    const cg=ctx.createRadialGradient(cx-3,cy-3,1,cx,cy,16);
     cg.addColorStop(0,'#334155'); cg.addColorStop(1,'#0f172a');
-    ctx.beginPath(); ctx.arc(cx,cy,22,0,Math.PI*2);
-    ctx.fillStyle=cg; ctx.fill();
-    ctx.strokeStyle='#f97316'; ctx.lineWidth=2.5; ctx.stroke();
-
-    // Pointer (top, pointing inward)
-    ctx.save();
-    ctx.translate(cx,18);
-    ctx.beginPath();
-    ctx.moveTo(0,24);  // tip pointing down into wheel
-    ctx.lineTo(-12,0);
-    ctx.lineTo(12,0);
-    ctx.closePath();
-    ctx.fillStyle='#fff';
-    ctx.shadowColor='rgba(249,115,22,0.9)';
-    ctx.shadowBlur=12;
-    ctx.fill();
-    ctx.strokeStyle='#f97316'; ctx.lineWidth=2; ctx.stroke();
-    ctx.restore();
+    ctx.beginPath(); ctx.arc(cx,cy,16,0,Math.PI*2);
+    ctx.fillStyle=cg; ctx.fill(); ctx.strokeStyle='#f97316'; ctx.lineWidth=2; ctx.stroke();
+    // Pointer
+    ctx.save(); ctx.translate(cx,12);
+    ctx.beginPath(); ctx.moveTo(0,18); ctx.lineTo(-9,0); ctx.lineTo(9,0); ctx.closePath();
+    ctx.fillStyle='#fff'; ctx.shadowColor='rgba(249,115,22,0.9)'; ctx.shadowBlur=10;
+    ctx.fill(); ctx.strokeStyle='#f97316'; ctx.lineWidth=1.5; ctx.stroke(); ctx.restore();
   }
 
-  React.useEffect(()=>{ drawWheel(angleRef.current); },[]);
-  React.useEffect(()=>{ if(!showWinner) drawWheel(angleRef.current); },[options.length,catFilter,tagFilter,removedIds.length]);
+  // ── Find winner from weighted slices ──
+  function findWeightedWinner(options, angle) {
+    if(!options.length) return null;
+    const total=options.reduce((s,o)=>s+o.weight,0);
+    let cum=0;
+    const slices=options.map(o=>{const s=(cum/total)*Math.PI*2;cum+=o.weight;return{start:s,end:(cum/total)*Math.PI*2};});
+    const fa=((angle%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+    const pa=(((-Math.PI/2)-fa)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+    const idx=slices.findIndex(s=>pa>=s.start&&pa<s.end);
+    return options[idx>=0?idx:0];
+  }
+  function findEqualWinner(options, angle) {
+    if(!options.length) return null;
+    const n=options.length, sz=(Math.PI*2)/n;
+    const fa=((angle%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
+    const pa=(((-Math.PI/2)-fa)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
+    return options[Math.floor(pa/sz)%n]||options[0];
+  }
+
+  function redrawAll() {
+    drawWheelCanvas(canvasUnratedRef, unratedOptions, angleUnratedRef.current, false);
+    drawWheelCanvas(canvasRatedRef,   ratedOptions,   angleRatedRef.current,   true);
+  }
+
+  React.useEffect(()=>{ redrawAll(); },[]);
+  React.useEffect(()=>{ if(!showWinners) redrawAll(); },
+    [unratedOptions.length,ratedOptions.length,catFilter,tagFilter,showWinners]);
 
   function spin() {
-    if (spinning||options.length<2) return;
-    setSpinning(true); setShowWinner(false); setWinner(null);
-    confettiRef.current = Array.from({length:28},(_,i)=>({
-      left: 4+Math.random()*92,
-      top:  2+Math.random()*40,
-      size: 5+Math.random()*9,
-      round: Math.random()>0.45,
-      color: WHEEL_COLORS[i%WHEEL_COLORS.length],
-      delay: Math.random()*0.65,
-      dur:   0.8+Math.random()*1.3,
+    if(spinning||unratedOptions.length<1) return;
+    setSpinning(true); setShowWinners(false); setWinners(null);
+    confettiRef.current=Array.from({length:28},(_,i)=>({
+      left:4+Math.random()*92, top:2+Math.random()*40,
+      size:5+Math.random()*9, round:Math.random()>0.45,
+      color:WHEEL_COLORS[i%WHEEL_COLORS.length],
+      delay:Math.random()*0.65, dur:0.8+Math.random()*1.3,
     }));
-
-    const totalDelta = (5+Math.floor(Math.random()*6))*Math.PI*2 + Math.random()*Math.PI*2;
-    const duration   = 3600+Math.random()*1600;
-    const startAngle = angleRef.current;
-    const t0 = performance.now();
-
+    const duration=3600+Math.random()*1600;
+    const duU=(5+Math.floor(Math.random()*6))*Math.PI*2+Math.random()*Math.PI*2;
+    const duR=(5+Math.floor(Math.random()*6))*Math.PI*2+Math.random()*Math.PI*2;
+    const s0U=angleUnratedRef.current, s0R=angleRatedRef.current;
+    const t0=performance.now();
     function frame(now) {
-      const t = Math.min((now-t0)/duration,1);
-      const e = 1-Math.pow(1-t,5); // ease-out quint
-      angleRef.current = startAngle + totalDelta*e;
-      drawWheel(angleRef.current);
-      if (t<1) { animRef.current=requestAnimationFrame(frame); return; }
-
-      const n=options.length, slice=(Math.PI*2)/n;
-      const finalAngle=((angleRef.current%(Math.PI*2))+Math.PI*2)%(Math.PI*2);
-      const ptrAngle=(((-Math.PI/2)-finalAngle)%(Math.PI*2)+Math.PI*2)%(Math.PI*2);
-      const idx=Math.floor(ptrAngle/slice)%n;
-      const w=options[idx]||options[0];
-      setWinColor(WHEEL_COLORS[idx%WHEEL_COLORS.length]);
-      setWinner(w);
+      const t=Math.min((now-t0)/duration,1);
+      const e=1-Math.pow(1-t,5);
+      angleUnratedRef.current=s0U+duU*e;
+      angleRatedRef.current  =s0R+duR*e;
+      drawWheelCanvas(canvasUnratedRef,unratedOptions,angleUnratedRef.current,false);
+      drawWheelCanvas(canvasRatedRef,ratedOptions,angleRatedRef.current,true);
+      if(t<1){animRef.current=requestAnimationFrame(frame);return;}
+      const unratedWinner=findEqualWinner(unratedOptions,angleUnratedRef.current);
+      const ratedWinner=ratedOptions.length>0?findWeightedWinner(ratedOptions,angleRatedRef.current):null;
+      setWinners({unrated:unratedWinner,rated:ratedWinner});
       setSpinning(false);
-      setTimeout(()=>setShowWinner(true),200);
+      setTimeout(()=>setShowWinners(true),200);
     }
     animRef.current=requestAnimationFrame(frame);
   }
-
-  function spinAgain() {
-    if (winner) setRemovedIds(ids=>[...ids,winner.id]);
-    setWinner(null); setShowWinner(false);
-  }
-
-  function reset() { setRemovedIds([]); setWinner(null); setShowWinner(false); }
 
   return (
     <div style={{paddingBottom:80}}>
@@ -804,148 +837,137 @@ function SpinTab({ restaurants, visits, groups, onLogVisit }) {
         .spin-btn-anim   { animation:spinBtnPulse 2.2s ease-in-out infinite; }
       `}</style>
 
-      {/* Filters bar */}
+      {/* Filters */}
       <div style={{position:'sticky',top:0,zIndex:50,background:C.bar,borderBottom:`1px solid ${C.border}`,padding:'10px 12px'}}>
         <div style={{display:'flex',gap:6,overflowX:'auto',paddingBottom:5}}>
           {[['all','🍽 All'],['fast_food','🍔 Fast Food'],['casual','🍴 Casual'],['sit_down','🍷 Sit-Down']].map(([k,l])=>(
-            <button key={k} style={pill(catFilter===k)} onClick={()=>{setCatFilter(k);setRemovedIds([]);setWinner(null);setShowWinner(false)}}>{l}</button>
+            <button key={k} style={pill(catFilter===k)} onClick={()=>{setCatFilter(k);setShowWinners(false);setWinners(null);}}>{l}</button>
           ))}
         </div>
         {presentTags.length>0&&(
           <div style={{display:'flex',gap:5,overflowX:'auto',paddingBottom:3,marginTop:6}}>
-            <button style={pill(!tagFilter,true)} onClick={()=>{setTagFilter('');setRemovedIds([]);setWinner(null);setShowWinner(false)}}>All Types</button>
+            <button style={pill(!tagFilter,true)} onClick={()=>{setTagFilter('');setShowWinners(false);setWinners(null);}}>All Types</button>
             {presentTags.map(t=>(
-              <button key={t} style={pill(tagFilter===t,true)} onClick={()=>{setTagFilter(tagFilter===t?'':t);setRemovedIds([]);setWinner(null);setShowWinner(false)}}>{t}</button>
+              <button key={t} style={pill(tagFilter===t,true)} onClick={()=>{setTagFilter(tagFilter===t?'':t);setShowWinners(false);setWinners(null);}}>{t}</button>
             ))}
           </div>
         )}
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginTop:5}}>
-          <div style={{color:C.muted,fontSize:11}}>
-            {options.length} option{options.length!==1?'s':''} on wheel
-            {removedIds.length>0?` · ${removedIds.length} skipped`:''}
-          </div>
-          {removedIds.length>0&&(
-            <button onClick={reset} style={{background:'none',border:'none',color:C.cyan,fontSize:11,cursor:'pointer',textDecoration:'underline'}}>Reset wheel</button>
-          )}
+        <div style={{display:'flex',gap:16,marginTop:5}}>
+          <span style={{color:C.muted,fontSize:11}}>🆕 {unratedOptions.length} new</span>
+          <span style={{color:'#a16207',fontSize:11}}>⭐ {ratedOptions.length} rated</span>
         </div>
       </div>
 
-      {/* Canvas + spin button */}
-      <div style={{display:'flex',flexDirection:'column',alignItems:'center',padding:'22px 12px 10px',gap:0}}>
-        <canvas
-          ref={canvasRef}
-          width={320} height={320}
-          className={winner&&!spinning?'wheel-glow-anim':''}
-          style={{borderRadius:'50%',display:'block',maxWidth:'100%'}}
-        />
-        <div style={{height:22}}/>
-        {options.length<2 ? (
+      {/* Two wheels side by side */}
+      <div style={{display:'flex',gap:6,padding:'14px 8px 0',justifyContent:'center',alignItems:'flex-start'}}>
+        <div style={{flex:1,maxWidth:190,display:'flex',flexDirection:'column',alignItems:'center',gap:5}}>
+          <div style={{color:C.mid,fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase'}}>🆕 New</div>
+          <canvas ref={canvasUnratedRef} width={200} height={200}
+            className={winners&&!spinning?'wheel-glow-anim':''}
+            style={{borderRadius:'50%',display:'block',width:'100%',height:'auto'}}/>
+        </div>
+        <div style={{flex:1,maxWidth:190,display:'flex',flexDirection:'column',alignItems:'center',gap:5}}>
+          <div style={{color:'#a16207',fontSize:10,fontWeight:700,letterSpacing:1,textTransform:'uppercase'}}>⭐ Rated</div>
+          <canvas ref={canvasRatedRef} width={200} height={200}
+            className={winners&&!spinning&&ratedOptions.length>0?'wheel-glow-anim':''}
+            style={{borderRadius:'50%',display:'block',width:'100%',height:'auto',opacity:ratedOptions.length===0?0.4:1}}/>
+        </div>
+      </div>
+      {ratedOptions.length===0&&(
+        <div style={{textAlign:'center',color:'#475569',fontSize:11,marginTop:6,padding:'0 16px'}}>
+          Rate some restaurants after visiting to unlock the rated wheel
+        </div>
+      )}
+
+      {/* Spin button */}
+      <div style={{display:'flex',justifyContent:'center',padding:'14px 12px 8px'}}>
+        {unratedOptions.length<1 ? (
           <div style={{color:C.muted,fontSize:13,textAlign:'center',maxWidth:260,lineHeight:1.6}}>
             {allAvailable.length===0
-              ? '🎉 Everything is on cooldown! Come back after your cooldowns reset.'
-              : 'Need at least 2 options — try a broader filter or reset skipped entries.'}
+              ? '🎉 Everything is on cooldown!'
+              : 'No new restaurants available — try a broader filter.'}
           </div>
         ) : (
-          <button
-            onClick={spin}
-            disabled={spinning}
+          <button onClick={spin} disabled={spinning}
             className={spinning?'':'spin-btn-anim'}
-            style={{
-              padding:'14px 46px',
-              borderRadius:50,
-              border:'none',
-              cursor:spinning?'default':'pointer',
-              fontSize:17,
-              fontFamily:'Georgia,serif',
-              fontWeight:700,
-              letterSpacing:0.4,
+            style={{padding:'14px 46px',borderRadius:50,border:'none',cursor:spinning?'default':'pointer',
+              fontSize:17,fontFamily:'Georgia,serif',fontWeight:700,letterSpacing:0.4,
               background:spinning?'#1e293b':'linear-gradient(135deg,#f97316 0%,#ef4444 100%)',
-              color:spinning?C.muted:'#fff',
-              transition:'background 0.3s',
-            }}
-          >{spinning?'🎡  Spinning…':'🎡  Spin the Wheel!'}</button>
+              color:spinning?C.muted:'#fff',transition:'background 0.3s'}}>
+            {spinning?'🎡  Spinning…':'🎡  Spin!'}
+          </button>
         )}
       </div>
 
-      {/* Winner overlay */}
-      {showWinner&&winner&&(
-        <div
-          style={{position:'fixed',inset:0,zIndex:500,background:'rgba(5,8,15,0.9)',
-            display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}
-          onClick={e=>{if(e.target===e.currentTarget)setShowWinner(false)}}
-        >
-          {/* Confetti */}
+      {/* Winners overlay */}
+      {showWinners&&winners&&(
+        <div style={{position:'fixed',inset:0,zIndex:500,background:'rgba(5,8,15,0.93)',
+          display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',
+          padding:'16px',overflowY:'auto'}}
+          onClick={e=>{if(e.target===e.currentTarget)setShowWinners(false);}}>
           {(confettiRef.current||[]).map((c,i)=>(
-            <div key={i} style={{
-              position:'absolute',left:`${c.left}%`,top:`${c.top}%`,
-              width:c.size,height:c.size,
-              borderRadius:c.round?'50%':'3px',
-              background:c.color,
-              animation:`confettiFall ${c.dur}s ease-in ${c.delay}s forwards`,
-              pointerEvents:'none',
-            }}/>
+            <div key={i} style={{position:'absolute',left:`${c.left}%`,top:`${c.top}%`,
+              width:c.size,height:c.size,borderRadius:c.round?'50%':'3px',
+              background:c.color,animation:`confettiFall ${c.dur}s ease-in ${c.delay}s forwards`,
+              pointerEvents:'none'}}/>
           ))}
-
-          {/* Card */}
-          <div style={{
-            background:'linear-gradient(155deg,#0f172a 0%,#1e293b 100%)',
-            border:`2px solid ${winColor}`,
-            borderRadius:22,
-            padding:'32px 26px 26px',
-            textAlign:'center',
-            maxWidth:310,
-            width:'100%',
-            animation:'winnerZoomIn 0.48s cubic-bezier(0.34,1.56,0.64,1) both',
-            boxShadow:`0 0 0 5px ${winColor}20, 0 0 55px ${winColor}40, 0 28px 70px rgba(0,0,0,0.75)`,
-            position:'relative',zIndex:1,
-          }}>
-            {/* Top accent bar */}
-            <div style={{position:'absolute',top:0,left:0,right:0,height:6,borderRadius:'20px 20px 0 0',
-              background:`linear-gradient(90deg,${winColor},${winColor}88)`}}/>
-
-            <div style={{fontSize:54,marginBottom:8,lineHeight:1}}>
-              {winner.category==='fast_food'?'🍔':winner.category==='casual'?'🍴':'🍷'}
-            </div>
-            <div style={{color:C.muted,fontSize:11,letterSpacing:2,textTransform:'uppercase',marginBottom:10}}>
-              The wheel has spoken!
-            </div>
-            <div style={{fontSize:23,fontWeight:700,color:'#fff',marginBottom:8,lineHeight:1.2}}>
-              {winner.name}
-            </div>
-            <div style={{
-              display:'inline-block',
-              background:`${winColor}20`,
-              border:`1px solid ${winColor}55`,
-              borderRadius:10,
-              padding:'3px 12px',
-              fontSize:11,color:winColor,marginBottom:22,
-            }}>
-              {CAT_LABELS[winner.category]}
-              {parseTags(winner.tags).length>0?' · '+parseTags(winner.tags).join(', '):''}
-            </div>
-
-            <div style={{display:'flex',flexDirection:'column',gap:10}}>
-              <button onClick={()=>{setShowWinner(false);onLogVisit(winner);}}
-                style={{padding:'12px 20px',borderRadius:12,border:'none',cursor:'pointer',
-                  fontSize:15,fontFamily:'Georgia,serif',fontWeight:700,
-                  background:'#166534',color:'#4ade80',
-                  boxShadow:'0 2px 14px rgba(34,197,94,0.35)'}}>
-                ✓ Let's eat! Log Visit
-              </button>
-              <button onClick={spinAgain}
-                disabled={(allAvailable.length-removedIds.length-1)<1}
-                style={{padding:'10px 20px',borderRadius:12,border:'none',cursor:'pointer',
-                  fontSize:14,fontFamily:'Georgia,serif',fontWeight:700,
-                  background:'#1e3a5f',color:'#7dd3fc',
-                  opacity:(allAvailable.length-removedIds.length-1)<1?0.4:1}}>
-                🎡 Nope — Spin Again
-              </button>
-              <button onClick={()=>setShowWinner(false)}
-                style={{background:'none',border:'none',color:C.muted,fontSize:12,cursor:'pointer',marginTop:2}}>
-                Dismiss
-              </button>
-            </div>
+          <div style={{color:C.muted,fontSize:11,letterSpacing:2,textTransform:'uppercase',
+            marginBottom:14,position:'relative',zIndex:1}}>
+            {winners.rated?'The wheels have spoken!':'The wheel has spoken!'}
           </div>
+          <div style={{display:'flex',gap:10,maxWidth:420,width:'100%',position:'relative',
+            zIndex:1,flexWrap:'wrap',justifyContent:'center'}}>
+            {/* New pick */}
+            {winners.unrated&&(
+              <div style={{flex:'1 1 145px',minWidth:145,
+                background:'linear-gradient(155deg,#0f172a 0%,#1e293b 100%)',
+                border:'2px solid #22c55e',borderRadius:18,padding:'18px 14px',
+                textAlign:'center',animation:'winnerZoomIn 0.48s cubic-bezier(0.34,1.56,0.64,1) both',
+                boxShadow:'0 0 30px #22c55e25'}}>
+                <div style={{color:'#4ade80',fontSize:9,letterSpacing:1.5,textTransform:'uppercase',marginBottom:6}}>🆕 New Pick</div>
+                <div style={{fontSize:30,marginBottom:4}}>
+                  {winners.unrated.category==='fast_food'?'🍔':winners.unrated.category==='casual'?'🍴':'🍷'}
+                </div>
+                <div style={{fontSize:15,fontWeight:700,color:'#fff',marginBottom:3,lineHeight:1.2}}>{winners.unrated.name}</div>
+                <div style={{fontSize:10,color:C.muted,marginBottom:12}}>{CAT_LABELS[winners.unrated.category]}</div>
+                <button onClick={()=>{setShowWinners(false);onLogVisit(winners.unrated);}}
+                  style={{padding:'8px 12px',borderRadius:10,border:'none',cursor:'pointer',fontSize:12,
+                    fontFamily:'Georgia,serif',fontWeight:700,background:'#166534',color:'#4ade80',width:'100%'}}>
+                  ✓ Let's eat!
+                </button>
+              </div>
+            )}
+            {/* Rated pick */}
+            {winners.rated&&(
+              <div style={{flex:'1 1 145px',minWidth:145,
+                background:'linear-gradient(155deg,#0f172a 0%,#1e293b 100%)',
+                border:'2px solid #fbbf24',borderRadius:18,padding:'18px 14px',
+                textAlign:'center',animation:'winnerZoomIn 0.48s cubic-bezier(0.34,1.56,0.64,1) 0.1s both',
+                boxShadow:'0 0 30px #fbbf2425'}}>
+                <div style={{color:'#fbbf24',fontSize:9,letterSpacing:1.5,textTransform:'uppercase',marginBottom:6}}>⭐ Rated Pick</div>
+                <div style={{fontSize:30,marginBottom:4}}>
+                  {winners.rated.category==='fast_food'?'🍔':winners.rated.category==='casual'?'🍴':'🍷'}
+                </div>
+                <div style={{fontSize:15,fontWeight:700,color:'#fff',marginBottom:3,lineHeight:1.2}}>{winners.rated.name}</div>
+                <div style={{display:'flex',justifyContent:'center',gap:2,marginBottom:3}}>
+                  {[1,2,3,4,5].map(n=>(
+                    <span key={n} style={{fontSize:13,color:n<=winners.rated.weight?'#fbbf24':'#334155'}}>★</span>
+                  ))}
+                </div>
+                <div style={{fontSize:10,color:C.muted,marginBottom:12}}>{CAT_LABELS[winners.rated.category]}</div>
+                <button onClick={()=>{setShowWinners(false);onLogVisit(winners.rated);}}
+                  style={{padding:'8px 12px',borderRadius:10,border:'none',cursor:'pointer',fontSize:12,
+                    fontFamily:'Georgia,serif',fontWeight:700,background:'#78350f',color:'#fde68a',width:'100%'}}>
+                  ✓ Let's eat!
+                </button>
+              </div>
+            )}
+          </div>
+          <button onClick={()=>setShowWinners(false)}
+            style={{background:'none',border:'none',color:C.muted,fontSize:12,cursor:'pointer',
+              marginTop:16,position:'relative',zIndex:1}}>
+            Dismiss
+          </button>
         </div>
       )}
     </div>
@@ -959,6 +981,7 @@ function LogTab({ restaurants, visits, onSaveVisit, onDeleteVisit, preSelected, 
   const [selected, setSelected] = React.useState(null);
   const [date, setDate] = React.useState(todayStr());
   const [notes, setNotes] = React.useState('');
+  const [rating, setRating] = React.useState(0);
   const [search, setSearch] = React.useState('');
   const [flash, setFlash] = React.useState('');
 
@@ -971,11 +994,17 @@ function LogTab({ restaurants, visits, onSaveVisit, onDeleteVisit, preSelected, 
   function save() {
     if(!selected) return;
     const v={ id:Date.now()+'-'+Math.random().toString(36).slice(2,7),
-      restaurant_id:selected.id, restaurant_name:selected.name, date, notes };
+      restaurant_id:selected.id, restaurant_name:selected.name, date, notes,
+      rating:rating>0?String(rating):'' };
     onSaveVisit(v);
-    setSelected(null);setSearch('');setNotes('');setDate(todayStr());
+    setSelected(null);setSearch('');setNotes('');setDate(todayStr());setRating(0);
     setFlash('✓ Visit logged!'); setTimeout(()=>setFlash(''),2500);
   }
+
+  function updateVisitRating(v, newRating) {
+    onSaveVisit({...v, rating:newRating>0?String(newRating):''});
+  }
+
   const recent = [...visits].sort((a,b)=>b.date>a.date?1:-1).slice(0,40);
 
   return (
@@ -1006,7 +1035,15 @@ function LogTab({ restaurants, visits, onSaveVisit, onDeleteVisit, preSelected, 
           )}
         </div>
         <input type="date" style={{...inp,marginBottom:8}} value={date} onChange={e=>setDate(e.target.value)} />
-        <input style={{...inp,marginBottom:12}} placeholder="Notes (optional)" value={notes} onChange={e=>setNotes(e.target.value)} />
+        <input style={{...inp,marginBottom:10}} placeholder="Notes (optional)" value={notes} onChange={e=>setNotes(e.target.value)} />
+        {/* Star rating picker */}
+        <div style={{display:'flex',alignItems:'center',gap:10,marginBottom:14,padding:'8px 12px',
+          background:'#0a0f1a',borderRadius:8,border:`1px solid ${C.border}`}}>
+          <span style={{color:C.muted,fontSize:12}}>Rating:</span>
+          <StarRating rating={rating} onChange={setRating} size={22}/>
+          {rating>0&&<span style={{color:'#fbbf24',fontSize:12}}>{rating}/5</span>}
+          {rating===0&&<span style={{color:'#334155',fontSize:11}}>tap to rate</span>}
+        </div>
         <button style={{...btn(selected?'#1d4ed8':'#1e293b',selected?'#fff':C.muted),width:'100%'}}
           onClick={save} disabled={!selected}>Save Visit</button>
       </div>
@@ -1014,14 +1051,24 @@ function LogTab({ restaurants, visits, onSaveVisit, onDeleteVisit, preSelected, 
       {recent.length===0&&<div style={{textAlign:'center',padding:30,color:'#334155',fontSize:13}}>No visits yet</div>}
       {recent.map(v=>{
         const r=restaurants.find(x=>x.id===v.restaurant_id);
+        const vRating=v.rating&&parseInt(v.rating)>0?parseInt(v.rating):0;
         return (
-          <div key={v.id} style={card({display:'flex',alignItems:'center',justifyContent:'space-between',gap:8})}>
-            <div style={{flex:1}}>
-              <div style={{color:C.text,fontSize:13,fontWeight:700}}>{v.restaurant_name}</div>
-              <div style={{color:C.muted,fontSize:11}}>{v.date}{v.notes?` · ${v.notes}`:''}{r?<span style={{color:'#334155'}}> · {CAT_LABELS[r.category]}</span>:''}</div>
+          <div key={v.id} style={card({gap:8})}>
+            <div style={{display:'flex',alignItems:'flex-start',justifyContent:'space-between',gap:8}}>
+              <div style={{flex:1}}>
+                <div style={{color:C.text,fontSize:13,fontWeight:700,marginBottom:2}}>{v.restaurant_name}</div>
+                <div style={{color:C.muted,fontSize:11}}>{v.date}{v.notes?` · ${v.notes}`:''}{r?<span style={{color:'#334155'}}> · {CAT_LABELS[r.category]}</span>:''}</div>
+              </div>
+              <button onClick={()=>{if(window.confirm('Delete this visit?'))onDeleteVisit(v.id);}}
+                style={{background:'none',border:'none',color:'#7f1d1d',cursor:'pointer',fontSize:18,padding:4,flexShrink:0}}>✕</button>
             </div>
-            <button onClick={()=>{if(window.confirm('Delete this visit?'))onDeleteVisit(v.id);}}
-              style={{background:'none',border:'none',color:'#7f1d1d',cursor:'pointer',fontSize:18,padding:4}}>✕</button>
+            {/* Inline star rating editor */}
+            <div style={{display:'flex',alignItems:'center',gap:8,marginTop:4}}>
+              <StarRating rating={vRating} onChange={newR=>updateVisitRating(v,newR)} size={18}/>
+              {vRating>0
+                ? <span style={{color:'#a16207',fontSize:11}}>{vRating}/5</span>
+                : <span style={{color:'#334155',fontSize:11}}>tap to rate</span>}
+            </div>
           </div>
         );
       })}
